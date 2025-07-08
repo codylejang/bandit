@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
 import random
+import torch
+import torch.nn as nn
+import torch.optim as optim
 
 class Bandit:
     def __init__(self, name, true_prob, decay_rate=0.9, uI=1.0, nI=5.0):
@@ -107,8 +110,96 @@ class BanditTask:
         print(f"Total rewards: {total_reward}")
         print(f"Total trials:  {total_trials}")
 
+class RNNAgent(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super().__init__()
+        self.rnn = nn.RNN(input_size, hidden_size, nonlinearity='tanh', batch_first=True)
+        self.fc  = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x, h=None):
+        out, h = self.rnn(x, h)
+        logits = self.fc(out)
+        return logits, h
+
 
 # --- Run simulation ---
 task = BanditTask()
 task.run()
 task.summarize()
+
+#flattening
+actions = []
+rewards = []
+bandit2index = {'A':0, 'B':1, 'C':2 } #mapping actions to indexes
+for entry in task.log:
+    actions.append(bandit2index[entry['chosen']])
+    rewards.append(entry['reward'])
+
+# X (one-hot + reward)
+# Y (next action)
+X, Y = [], []
+for t in range(1, len(actions)):
+    prev_a = actions[t-1]
+    onehot = [int(prev_a == i) for i in range(3)]
+    X.append(onehot + [rewards[t-1]])  
+    Y.append(actions[t])               
+
+#mask handling, so we see which bandit is not selected during the 3 choose 2
+mask_list = []
+for entry in task.log:
+    avail = [0,0,0]
+    for name in entry['options']: #marking which bandits were available during given trial
+        avail[bandit2index[name]] = 1
+    mask_list.append(avail)
+
+#convert to tensors
+X = torch.tensor(X, dtype=torch.float32).unsqueeze(0)  # [1, T, 4]
+Y = torch.tensor(Y, dtype=torch.long).unsqueeze(0)   # [1, T]
+mask = torch.tensor(mask_list, dtype=torch.bool).unsqueeze(0)
+mask = mask[:, 1:, :]
+
+assert mask.shape[1] == X.shape[1] == Y.shape[1]
+
+#init and train RNN
+input_size, hidden_size, output_size = 4, 16, 3
+model     = RNNAgent(input_size, hidden_size, output_size)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.005)
+
+LARGE_NEG = -1e9
+
+model.train()
+'''
+Per block, RNN learns dependencies and the weights for each bandit. 
+Each block would reset the hidden states, while maintaining the learned weights.
+Parallels Aquino: new block, new reward probabilities, drawn for each bandit, remained fixed for that block.
+'''
+for epoch in range(1, 31): #repeat the entire set of 20 blocks 30 times 
+    total_loss = 0.0
+    for b in range(task.n_blocks):
+        #slice tensors to correspond to block
+        start = b * task.trials_per_block
+        end = (b+1) * task.trials_per_block
+        xb = X[:, start:end, :]        # dim [1,15,4]
+        yb = Y[:, start:end]           # dim [1,15]
+        mb = mask[:, start:end, :]     # dim [1,15,3]
+
+        optimizer.zero_grad()
+        # reset hidden+cell by passing None for start of every block
+        logits, _ = model(xb, None)    # [1,15,3]
+        logits = logits.masked_fill(~mb, LARGE_NEG) #inverse mask unavail bandits so they get ~0 prob
+        loss   = criterion(logits.squeeze(0), yb.squeeze(0))
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item() #add to epoch total
+    print(f"Epoch {epoch:02d} — Avg Loss: {total_loss/task.n_blocks:.4f}")
+
+# check training accuracy with actual decision
+model.eval()
+with torch.no_grad():
+    logits, _ = model(X, None)        # [1, T-1, 3]
+    logits = logits.masked_fill(~mask, LARGE_NEG)
+    preds  = logits[0].argmax(dim=-1)  # [T-1]
+    acc    = (preds == Y.squeeze(0)).float().mean()
+    print(f"Train accuracy (masked): {acc:.3%}")
