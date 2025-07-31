@@ -55,10 +55,10 @@ class BanditTask:
     their exposure counts incremented (for the novelty term), and utilities computed
     via Equation 3. Decisions follow the binary softmax rule (Equation 2)
     '''
-    def __init__(self, n_blocks=20, trials_per_block=15):
-        self.n_blocks         = n_blocks
+    def __init__(self, n_blocks=30, trials_per_block=15):
+        self.n_blocks = n_blocks
         self.trials_per_block = trials_per_block
-        self.log              = []
+        self.log = []
 
     def generate_bandits(self):
         names = ['A','B','C']
@@ -111,16 +111,17 @@ class BanditTask:
         print(f"Total rewards: {total_reward}")
         print(f"Total trials:  {total_trials}")
 
-class RNNAgent(nn.Module):
+class LSTMAgent(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
-        self.rnn = nn.RNN(input_size, hidden_size, nonlinearity='tanh', batch_first=True)
+        # replace RNN with LSTM
+        self.rnn = nn.LSTM(input_size, hidden_size, batch_first=True)
         self.fc  = nn.Linear(hidden_size, output_size)
 
-    def forward(self, x, h=None):
-        out, h = self.rnn(x, h)
+    def forward(self, x, hc=None):
+        out, (hn, cn) = self.rnn(x, hc)
         logits = self.fc(out)
-        return logits, h
+        return logits, (hn, cn)
 
 # --- Run simulation ---
 task = BanditTask()
@@ -128,55 +129,73 @@ task.run()
 task.summarize()
 
 # --- Build 3-step [u0, u1, c, delta] sequence ---
-def build_3step_sequence(log, bandit2index):
+def build_3step_sequence(log):
+
+    # convert bandit to index for availability encoding
+    bandit2index = {'A':0, 'B':1, 'C':2}
     X, Y, decision_mask = [], [], []
     for entry in log:
-        # 1) stimulus step: absolute utilities of the two arms
-        u0 = entry['utilities'][entry['options'][0]]
-        u1 = entry['utilities'][entry['options'][1]]
-        X.append([u0, u1, 0.0, 0.0])  
+        # 1) stimulus step: what bandits are shown
+        avail = [0.0, 0.0, 0.0]
+        for name in entry['options']:
+             avail[bandit2index[name]] = 1.0 #one hot encode trial available bandits
+        
+        X.append(avail + [0.0] + [0.0])  # +[go=0]+[reward=0]
         Y.append(-100)            # dummy label
         decision_mask.append(False)
 
         # 2) decision step: choice code (+1 for arm0, -1 for arm1)
-        choice_idx = bandit2index[entry['chosen']]
-        c = +1.0 if choice_idx == bandit2index[entry['options'][0]] else -1.0
-        X.append([0.0, 0.0, c, 0.0])
-        Y.append(choice_idx)     # real label: which arm
+        X.append([0.0,0.0,0.0] + [1.0] + [0.0])
+        bandit_index = bandit2index[entry['chosen']]
+        Y.append(bandit_index)
         decision_mask.append(True)
 
-        # 3) feedback step: RPE = reward - expected value of chosen
-        q_chosen = entry['ev'][entry['chosen']]
-        delta = entry['reward'] - q_chosen
-        X.append([0.0, 0.0, 0.0, delta])
-        Y.append(-100)            # dummy label
+        # 3) feedback step: no delta, network must learn to internally subtract its own expected value
+        X.append([0.0,0.0,0.0] + [0.0] + [entry['reward']])
+        Y.append(-100)
         decision_mask.append(False)
 
-    X = torch.tensor(X, dtype=torch.float32).unsqueeze(0)        # [1, 3T, 4]
+    X = torch.tensor(X, dtype=torch.float32).unsqueeze(0)        # [1, 3T, 5]
     Y = torch.tensor(Y, dtype=torch.long).unsqueeze(0)           # [1, 3T]
     mask = torch.tensor(decision_mask, dtype=torch.bool).unsqueeze(0)  # [1, 3T]
     return X, Y, mask
 
-bandit2index = {'A':0, 'B':1, 'C':2}
-X_seq, Y_seq, seq_mask = build_3step_sequence(task.log, bandit2index)
+X_seq, Y_seq, seq_mask = build_3step_sequence(task.log)
 
 # init and train RNN with input_size=4
-input_size, hidden_size, output_size = 4, 32, 3
-model     = RNNAgent(input_size, hidden_size, output_size)
+input_size, hidden_size, output_size = 5, 64, 3
+model     = LSTMAgent(input_size, hidden_size, output_size)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.005)
 
 model.train()
+block_size = 3 * task.trials_per_block
+n_blocks   = task.n_blocks
+
 for epoch in range(1, 31):
-    optimizer.zero_grad()
-    logits, _ = model(X_seq, None)                   # [1, 3T, 3]
-    # select only decision timesteps for loss
-    logits_dec = logits[seq_mask].view(-1, output_size)
-    y_dec      = Y_seq[ seq_mask].view(-1)
-    loss       = criterion(logits_dec, y_dec)
-    loss.backward()
-    optimizer.step()
-    print(f"Epoch {epoch:02d} — Loss: {loss.item():.4f}")
+    total_loss = 0.0
+    for b in range(n_blocks):
+        # slice out one block’s 3T steps
+        start = b * block_size
+        end   = (b + 1) * block_size
+        xb = X_seq[:, start:end, :]               # [1, 3*trials_per_block, input_size]
+        yb = Y_seq[:, start:end]                  # [1, 3*trials_per_block]
+        mb = seq_mask[:, start:end]               # [1, 3*trials_per_block]
+
+        optimizer.zero_grad()
+        # reset hidden state by passing None
+        logits, _ = model(xb, None)               # [1, 3*trials_per_block, output_size]
+        # pick only decision steps
+        logits_dec = logits[mb].view(-1, output_size)
+        y_dec      = yb[mb].view(-1)
+        loss       = criterion(logits_dec, y_dec)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+    avg_loss = total_loss / n_blocks
+    print(f"Epoch {epoch:02d} — Avg Loss: {avg_loss:.4f}")
 
 # check training accuracy on decision steps
 model.eval()
@@ -190,8 +209,8 @@ with torch.no_grad():
 # extract hidden states and decode
 model.eval()
 with torch.no_grad():
-    hidden_seq, _ = model.rnn(X_seq, None)   # [1, 3T, 32]
-h = hidden_seq.squeeze(0).cpu().numpy()     # [3T, 32]
+    hidden_seq, _ = model.rnn(X_seq, None)   # [1, 3T, 64]
+h = hidden_seq.squeeze(0).cpu().numpy()     # [3T, 64]
 
 T = h.shape[0] // 3
 stim_states     = h[0::3]   # [T, 32]
@@ -202,6 +221,8 @@ feedback_states = h[2::3]   # [T, 32]
 u0     = np.array([e['utilities'][e['options'][0]] for e in task.log])
 u1     = np.array([e['utilities'][e['options'][1]] for e in task.log])
 u_diff = u0 - u1
+
+bandit2index = {'A':0, 'B':1, 'C':2}
 choice = np.array([bandit2index[e['chosen']] for e in task.log])
 rpe    = np.array([e['reward'] - e['ev'][e['chosen']] for e in task.log])
 
@@ -210,7 +231,7 @@ lr = LinearRegression().fit(stim_states, u_diff)
 print("Stimulus u_diff R2:", r2_score(u_diff, lr.predict(stim_states)))
 
 # decode choice
-clf = LogisticRegression().fit(decision_states, choice)
+clf = LogisticRegression(max_iter=200).fit(decision_states, choice)
 print("Decision accuracy:", accuracy_score(choice, clf.predict(decision_states)))
 
 # decode feedback RPE
