@@ -141,24 +141,22 @@ def build_3step_sequence(log):
              avail[bandit2index[name]] = 1.0 #one hot encode trial available bandits
         
         X.append(avail + [0.0] + [0.0])  # +[go=0]+[reward=0]
-        Y.append(-100)            # dummy label
         decision_mask.append(False)
 
-        # 2) decision step: choice code (+1 for arm0, -1 for arm1)
+        # 2) decision step
         X.append([0.0,0.0,0.0] + [1.0] + [0.0])
         bandit_index = bandit2index[entry['chosen']]
-        Y.append(bandit_index)
+        Y.append(bandit_index)     # real label: which arm
         decision_mask.append(True)
 
         # 3) feedback step: no delta, network must learn to internally subtract its own expected value
         X.append([0.0,0.0,0.0] + [0.0] + [entry['reward']])
-        Y.append(-100)
         decision_mask.append(False)
 
     X = torch.tensor(X, dtype=torch.float32).unsqueeze(0)        # [1, 3T, 5]
-    Y = torch.tensor(Y, dtype=torch.long).unsqueeze(0)           # [1, 3T]
-    mask = torch.tensor(decision_mask, dtype=torch.bool).unsqueeze(0)  # [1, 3T]
-    return X, Y, mask
+    Y = torch.tensor(Y, dtype=torch.long)
+    decision_mask = torch.tensor(decision_mask, dtype=torch.bool).unsqueeze(0)  # [1, 3T]
+    return X, Y, decision_mask
 
 X_seq, Y_seq, seq_mask = build_3step_sequence(task.log)
 
@@ -177,18 +175,21 @@ for epoch in range(1, 31):
     for b in range(n_blocks):
         # slice out one block’s 3T steps
         start = b * block_size
-        end   = (b + 1) * block_size
+        end = (b + 1) * block_size
         xb = X_seq[:, start:end, :]               # [1, 3*trials_per_block, input_size]
-        yb = Y_seq[:, start:end]                  # [1, 3*trials_per_block]
         mb = seq_mask[:, start:end]               # [1, 3*trials_per_block]
+
+        label_start = b * task.trials_per_block
+        label_end = (b+1) * task.trials_per_block
+        yb_block = Y_seq[label_start:label_end]  # [trials_per_block]
 
         optimizer.zero_grad()
         # reset hidden state by passing None
         logits, _ = model(xb, None)               # [1, 3*trials_per_block, output_size]
         # pick only decision steps
         logits_dec = logits[mb].view(-1, output_size)
-        y_dec      = yb[mb].view(-1)
-        loss       = criterion(logits_dec, y_dec)
+        y_dec = yb_block
+        loss = criterion(logits_dec, y_dec)
         loss.backward()
         optimizer.step()
 
@@ -200,10 +201,10 @@ for epoch in range(1, 31):
 # check training accuracy on decision steps
 model.eval()
 with torch.no_grad():
-    logits, _  = model(X_seq, None)
+    logits, _ = model(X_seq, None)
     logits_dec = logits[seq_mask].view(-1, output_size)
-    preds      = logits_dec.argmax(dim=-1)
-    acc        = (preds == Y_seq[seq_mask].view(-1)).float().mean()
+    preds = logits_dec.argmax(dim=-1)
+    acc = (preds == Y_seq).float().mean()
     print(f"Train accuracy (decision-only): {acc:.3%}")
 
 # extract hidden states and decode
@@ -213,18 +214,18 @@ with torch.no_grad():
 h = hidden_seq.squeeze(0).cpu().numpy()     # [3T, 64]
 
 T = h.shape[0] // 3
-stim_states     = h[0::3]   # [T, 32]
-decision_states = h[1::3]   # [T, 32]
-feedback_states = h[2::3]   # [T, 32]
+stim_states = h[0::3]   # [T, 64]
+decision_states = h[1::3]   # [T, 64]
+feedback_states = h[2::3]   # [T, 64]
 
 # prepare targets
-u0     = np.array([e['utilities'][e['options'][0]] for e in task.log])
-u1     = np.array([e['utilities'][e['options'][1]] for e in task.log])
+u0 = np.array([e['utilities'][e['options'][0]] for e in task.log])
+u1 = np.array([e['utilities'][e['options'][1]] for e in task.log])
 u_diff = u0 - u1
 
 bandit2index = {'A':0, 'B':1, 'C':2}
 choice = np.array([bandit2index[e['chosen']] for e in task.log])
-rpe    = np.array([e['reward'] - e['ev'][e['chosen']] for e in task.log])
+rpe = np.array([e['reward'] - e['ev'][e['chosen']] for e in task.log])
 
 # decode stimulus difference
 lr = LinearRegression().fit(stim_states, u_diff)
