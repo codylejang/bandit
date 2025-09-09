@@ -1,0 +1,176 @@
+% SCRATCH PAD
+clc; clear;
+data_path = fullfile("C:\Users\Luis\Dropbox\DELCARMEN\prj_cody\bandit\data\aquinoshareddata\shared");
+data_path_beh = fullfile(data_path,"behavior/");
+
+exist(data_path,"dir");
+X = load(fullfile(data_path_beh,"allBehavior.mat"));
+X = X.fitResults;
+X
+
+df = table;
+for ii = 1:numel(X)
+	x = X{ii};
+	
+
+	
+	qvals = x.qVals;
+	block = x.blockID;
+	
+	selected = x.selectedVector;
+	selectStimId =x.selectStimID;
+
+	rejectStimId = x.rejectStimID;
+
+	isNovel = x.isNovel;
+	outcome = x.outcome;
+	dfi = array2table([block,outcome,selected,selectStimId,rejectStimId,isNovel,qvals],...
+		'VariableNames',{'Block','Outcome',...
+		'Selection','SelectedStimID','RejectStimID',...
+		'IsNovelLeft','IsNovelRight','Qleft','Qright'});
+	
+	dfi.PatientId = categorical(repmat(ii,height(dfi),1));
+	dfi.TrialAccum = (1:height(dfi))';
+	
+	dfi.("TrialInBlock") = zeros(height(dfi),1);
+	
+	blocks = unique(dfi.Block);
+	for jj = 1:numel(blocks)
+		block_idx = blocks(jj) == dfi.Block;
+		dfi.("TrialInBlock")(block_idx) = (1:sum(block_idx));
+		
+	end
+
+	df = vertcat(df,dfi);
+	
+	if ii== numel(X) -4
+		df_eg = [dfi,table(x.qVals_all,'VariableNames',{'QvalsAll'})];
+		df_eg = [df_eg,table(x.unseenVector,'VariableNames',{'Unseen'})];
+		
+	end
+
+
+
+end
+
+
+
+df = movevars(df,["PatientId","TrialAccum","Block","TrialInBlock"],"Before",df.Properties.VariableNames(1));
+df = removevars(df,["IsNovelLeft","IsNovelRight"]);
+
+df_eg = movevars(df_eg,["PatientId","TrialAccum","Block","TrialInBlock","Unseen"],"Before",df_eg.Properties.VariableNames(1));
+df_eg = removevars(df_eg,["IsNovelLeft","IsNovelRight"])
+
+%% Recover/replicate
+clc
+vars_grouplevel = ["PatientId","Block"];
+n_arms = width(df_eg.QvalsAll);
+
+dfQ = df_eg(:,["TrialAccum",vars_grouplevel,"TrialInBlock","Outcome","SelectedStimID","RejectStimID","Unseen"]);
+dfQ = [dfQ,table(zeros(size(df_eg.QvalsAll)),'VariableNames',"K")];
+dfQ = [dfQ,table(zeros(size(df_eg.QvalsAll)),'VariableNames',"N")];
+
+n = zeros(1,n_arms);
+k = zeros(1,n_arms);
+for ii = 1:height(dfQ)
+	trial = dfQ.TrialAccum(ii);
+	trialInBlock = dfQ.TrialInBlock(ii);
+	select_arm = dfQ.SelectedStimID(ii);
+	reject_arm = dfQ.RejectStimID(ii);
+	unseen_arm = dfQ.Unseen(ii);
+	outcome = dfQ.Outcome(ii);
+
+	% 
+	if trialInBlock == 1 % reset count each
+		n = zeros(1,n_arms);
+		k = zeros(1,n_arms);
+	end
+
+	k(select_arm) = k(select_arm) + outcome;
+	n(select_arm) = n(select_arm)  +1;
+	% n(reject_arm) = n(reject_arm)  +1;
+	% n(unseen_arm) = n(unseen_arm)  +1;
+	
+	dfQ.N(ii,:) = n;
+	dfQ.K(ii,:) = k;
+	
+end
+
+
+dfQ.Qvals = betastat(dfQ.K+1,dfQ.N-dfQ.K+1);
+
+
+dfQ(1:20,["TrialAccum",vars_grouplevel,"TrialInBlock","Outcome","SelectedStimID","RejectStimID","Qvals"])
+df_eg(1:20,["TrialAccum",vars_grouplevel,"TrialInBlock","Outcome","SelectedStimID","RejectStimID","QvalsAll"])
+
+%% Summary stats
+clc
+vars_grouplevel = ["PatientId","Block"];
+
+
+S = unique(df(:,vars_grouplevel));
+S = S(1:10,:);
+dfQ = nan(1,22);
+for ii = 1:height(S)
+	s = df.PatientId == S.PatientId(ii) & df.Block == S.Block(ii);
+	x = df(s,:);
+	x = removevars(x,["Selection","IsNovelLeft","IsNovelRight"])
+	for jj = x.TrialInBlock
+		
+
+	end
+end
+
+%% Summary Plots
+patient_ids = unique(df.PatientId);
+colors = lines(4);
+clr_left = colors(1,:);
+clr_right = colors(2,:)
+
+% Plot Q Values
+for ii = 1:2:numel(patient_ids)
+	nexttile; hold on;
+	df_ii = df(df.PatientId==string(ii),:) ;
+	plot(df_ii,"TrialAccum",["Qleft"],"Color",clr_left);
+	plot(df_ii,"TrialAccum",["Qright"],"Color",clr_right);
+
+	b_start = df_ii.TrialAccum(df_ii.TrialInBlock == 1);	
+	scatter(df_ii(b_start,:),"TrialAccum","Qleft","filled","MarkerFaceColor",clr_left,'SizeData',50);
+	scatter(df_ii(b_start,:),"TrialAccum",["Qright"],"filled","MarkerFaceColor",clr_right);
+	xline(b_start)
+	box off
+	ylim([0 1])
+end
+
+
+%% Example subject plot
+clc
+eg_subject = string(20);
+df_ii = df(df.PatientId==eg_subject,:) ;
+df_ii = rmmissing(df_ii,1);
+block_ids = unique(df_ii.Block);
+
+height(df_ii)
+
+X = {}
+for bb = 1:numel(block_ids)
+	x = df_ii(df_ii.Block==block_ids(bb),:) ;
+	% x = mergevars(x,["Qleft","Qright"],"NewVariableName","Q");
+	X = [X,{x}];
+end
+
+X
+
+
+close all
+h = stackedplot(X,'XVariable','TrialAccum',...
+	'DisplayVariables',["Selection","SelectedStimID","Qleft","Qright","TrialInBlock"])
+
+varidx_selection = string(h.DisplayVariables ) == "Selection";
+h.LineProperties(varidx_selection).Marker = '.'
+
+% varidx_q = string(h.DisplayVariables ) == "Q";
+% 
+% h.LineProperties(varidx_q).Marker = 'o'
+% h.LineProperties(varidx_q).Color = '-'
+
