@@ -16,3 +16,8 @@ env/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Project specific
+luis_code/__pycache__
+luis_code/.venv
+/data/aquinoshareddata
