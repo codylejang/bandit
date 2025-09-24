@@ -13,7 +13,7 @@ class Bandit:
     def __init__(self, name, true_prob, eta=0.15, uI=1.0, nI=5.0):
         self.name = name
         self.true_prob = true_prob
-        self.eta = eta # recency rate for counts (0<eta<1)
+        self.eta = eta # recency rate for counts (0<eta<1) (forget rate)
         self.uI = uI
         self.nI = nI
         self.reset() # reset values when bandit created
