@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as np_random_alias  # avoid accidental name shadowing
+np_random_alias = np  # keep numpy accessible as np
 import pandas as pd
 import random
 import torch
@@ -6,7 +8,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from collections import deque
 
 # fixed mapping for 3-bandit setup
 BANDIT_INDEX = {'A': 0, 'B': 1, 'C': 2}
@@ -41,19 +42,12 @@ class BanditTask:
 
 
 class StateEncoder(nn.Module):
-    # 9-d: 3 avail + 2 block/trial + 3 step flags + 1 reward
+    # 8-d: 3 avail + 1 trial norm + 3 step flags + 1 reward
     # reward is 0 except at feedback
-    def __init__(self, state_dim=9, norm_blocks=30, norm_trials=15):
+    def __init__(self, state_dim=8, norm_trials=15):
         super().__init__()
         self.state_dim = state_dim
-        self.norm_blocks = float(norm_blocks)
         self.norm_trials = float(norm_trials)
-
-    def _bt(self, info):
-        return torch.tensor(
-            [info['block'] / self.norm_blocks, info['trial'] / self.norm_trials],
-            dtype=torch.float32
-        )
 
     def _avail(self, avail):
         x = torch.zeros(3, dtype=torch.float32)
@@ -61,31 +55,36 @@ class StateEncoder(nn.Module):
             x[BANDIT_INDEX[b]] = 1.0
         return x
 
+    def _trial(self, info):
+        # [0,1) scaling by default; switch to inclusive if you prefer
+        t = info['trial'] / self.norm_trials
+        return torch.tensor([t], dtype=torch.float32)
+
     def stim(self, avail, info):
         # step: stimulus (reward slot zero)
         return torch.cat([
-            self._avail(avail), self._bt(info),
+            self._avail(avail), self._trial(info),
             torch.tensor([1.0, 0.0, 0.0]), torch.tensor([0.0])
-        ])
+        ]).to(torch.float32)
 
     def decision(self, avail, info):
         # step: decision (reward slot zero)
         return torch.cat([
-            self._avail(avail), self._bt(info),
+            self._avail(avail), self._trial(info),
             torch.tensor([0.0, 1.0, 0.0]), torch.tensor([0.0])
-        ])
+        ]).to(torch.float32)
 
     def feedback(self, reward, info):
         # step: feedback (reward slot carries outcome)
         return torch.cat([
-            torch.zeros(3), self._bt(info),
+            torch.zeros(3), self._trial(info),
             torch.tensor([0.0, 0.0, 1.0]), torch.tensor([float(reward)])
-        ])
+        ]).to(torch.float32)
 
 
 class LSTMPolicyNetwork(nn.Module):
     # lstm backbone with policy + value heads
-    def __init__(self, input_size=9, hidden_size=128, num_layers=2, dropout=0.1):
+    def __init__(self, input_size=8, hidden_size=128, num_layers=2, dropout=0.1):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size, hidden_size, num_layers,
@@ -123,20 +122,18 @@ class LSTMPolicyNetwork(nn.Module):
 class RLAgent:
     def __init__(
         self,
-        input_size=9,
+        input_size=8,
         hidden_size=128,
         lr=1e-3,
         gamma=0.99,
         entropy_coef=0.01,
         value_coef=0.5,
-        norm_blocks=30,
         norm_trials=15
     ):
-        
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # model parts
-        self.state_encoder = StateEncoder(state_dim=input_size, norm_blocks=norm_blocks, norm_trials=norm_trials)
+        self.state_encoder = StateEncoder(state_dim=input_size, norm_trials=norm_trials)
         self.policy_network = LSTMPolicyNetwork(input_size=input_size, hidden_size=hidden_size).to(self.device)
         self.optimizer = optim.Adam(self.policy_network.parameters(), lr=lr)
 
@@ -194,16 +191,15 @@ class RLAgent:
                 logits, values, hidden = self.policy_network(x_dec, hidden, mask_dec)  # (1,1,3), (1,1,1)
 
                 # masked logits for valid arms
-                dec_logits = logits[:, -1, :]                       # (1,3)
-                dec_logits = dec_logits.masked_fill(~mask_dec[:, -1, :], -1e9)
-                log_probs = F.log_softmax(dec_logits, dim=-1)       # (1,3)
-                probs = log_probs.exp()                              # (1,3)
+                dec_logits = logits[:, -1, :].masked_fill(~mask_dec[:, -1, :], -1e9)
+                log_probs = F.log_softmax(dec_logits, dim=-1)  # (1,3)
+                probs = log_probs.exp()                        # (1,3)
 
                 # sample action for training
                 dist = torch.distributions.Categorical(probs)
-                action = dist.sample()                               # (1,)
-                logp = dist.log_prob(action)                         # (1,)
-                entropy = dist.entropy()                             # (1,)
+                action = dist.sample()
+                logp = dist.log_prob(action)
+                entropy = dist.entropy()
 
                 # map index to chosen bandit
                 chosen_name = BANDIT_NAMES[action.item()]
@@ -246,8 +242,6 @@ class RLAgent:
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                
-                #prevention of exploading gradients
                 torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), 1.0)
                 self.optimizer.step()
 
@@ -299,35 +293,35 @@ class RLAgent:
 
         return np.mean(total_rewards), np.std(total_rewards)
 
-    # def plot_training_progress(self):
-    #     # simple plots for reward/loss/entropy
-    #     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    def plot_training_progress(self):
+        # simple plots for reward/loss/entropy
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
-    #     axes[0, 0].plot(self.training_stats['rewards'])
-    #     axes[0, 0].set_title('episode rewards')
-    #     axes[0, 0].set_xlabel('episode')
-    #     axes[0, 0].set_ylabel('total reward')
+        axes[0, 0].plot(self.training_stats['rewards'])
+        axes[0, 0].set_title('episode rewards')
+        axes[0, 0].set_xlabel('episode')
+        axes[0, 0].set_ylabel('total reward')
 
-    #     axes[0, 1].plot(self.training_stats['losses'])
-    #     axes[0, 1].set_title('training loss')
-    #     axes[0, 1].set_xlabel('update')
-    #     axes[0, 1].set_ylabel('loss')
+        axes[0, 1].plot(self.training_stats['losses'])
+        axes[0, 1].set_title('training loss')
+        axes[0, 1].set_xlabel('update')
+        axes[0, 1].set_ylabel('loss')
 
-    #     axes[1, 0].plot(self.training_stats['entropies'])
-    #     axes[1, 0].set_title('policy entropy')
-    #     axes[1, 0].set_xlabel('update')
-    #     axes[1, 0].set_ylabel('entropy')
+        axes[1, 0].plot(self.training_stats['entropies'])
+        axes[1, 0].set_title('policy entropy')
+        axes[1, 0].set_xlabel('update')
+        axes[1, 0].set_ylabel('entropy')
 
-    #     if len(self.training_stats['rewards']) > 10:
-    #         window = min(50, len(self.training_stats['rewards']) // 4)
-    #         moving_avg = pd.Series(self.training_stats['rewards']).rolling(window=window).mean()
-    #         axes[1, 1].plot(moving_avg)
-    #         axes[1, 1].set_title(f'moving average rewards (window={window})')
-    #         axes[1, 1].set_xlabel('episode')
-    #         axes[1, 1].set_ylabel('avg reward')
+        if len(self.training_stats['rewards']) > 10:
+            window = min(50, len(self.training_stats['rewards']) // 4)
+            moving_avg = pd.Series(self.training_stats['rewards']).rolling(window=window).mean()
+            axes[1, 1].plot(moving_avg)
+            axes[1, 1].set_title(f'moving average rewards (window={window})')
+            axes[1, 1].set_xlabel('episode')
+            axes[1, 1].set_ylabel('avg reward')
 
-    #     plt.tight_layout()
-    #     plt.show()
+        plt.tight_layout()
+        plt.show()
 
 
 def main():
@@ -336,10 +330,9 @@ def main():
 
     task = BanditTask(n_blocks=30, trials_per_block=15)
     agent = RLAgent(
-        input_size=9,
+        input_size=8,
         hidden_size=128,
         lr=1e-3,
-        norm_blocks=task.n_blocks,
         norm_trials=task.trials_per_block
     )
 
@@ -357,7 +350,7 @@ def main():
     mean_r, std_r = agent.evaluate(task, num_episodes=20)
     print(f"final performance: {mean_r:.2f} ± {std_r:.2f}")
 
-    # agent.plot_training_progress()
+    agent.plot_training_progress()
     return agent
 
 
