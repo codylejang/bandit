@@ -1,6 +1,4 @@
 import numpy as np
-import pandas as np_random_alias  # avoid accidental name shadowing
-np_random_alias = np  # keep numpy accessible as np
 import pandas as pd
 import random
 import torch
@@ -293,35 +291,35 @@ class RLAgent:
 
         return np.mean(total_rewards), np.std(total_rewards)
 
-    def plot_training_progress(self):
-        # simple plots for reward/loss/entropy
-        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    # def plot_training_progress(self):
+    #     # simple plots for reward/loss/entropy
+    #     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
-        axes[0, 0].plot(self.training_stats['rewards'])
-        axes[0, 0].set_title('episode rewards')
-        axes[0, 0].set_xlabel('episode')
-        axes[0, 0].set_ylabel('total reward')
+    #     axes[0, 0].plot(self.training_stats['rewards'])
+    #     axes[0, 0].set_title('episode rewards')
+    #     axes[0, 0].set_xlabel('episode')
+    #     axes[0, 0].set_ylabel('total reward')
 
-        axes[0, 1].plot(self.training_stats['losses'])
-        axes[0, 1].set_title('training loss')
-        axes[0, 1].set_xlabel('update')
-        axes[0, 1].set_ylabel('loss')
+    #     axes[0, 1].plot(self.training_stats['losses'])
+    #     axes[0, 1].set_title('training loss')
+    #     axes[0, 1].set_xlabel('update')
+    #     axes[0, 1].set_ylabel('loss')
 
-        axes[1, 0].plot(self.training_stats['entropies'])
-        axes[1, 0].set_title('policy entropy')
-        axes[1, 0].set_xlabel('update')
-        axes[1, 0].set_ylabel('entropy')
+    #     axes[1, 0].plot(self.training_stats['entropies'])
+    #     axes[1, 0].set_title('policy entropy')
+    #     axes[1, 0].set_xlabel('update')
+    #     axes[1, 0].set_ylabel('entropy')
 
-        if len(self.training_stats['rewards']) > 10:
-            window = min(50, len(self.training_stats['rewards']) // 4)
-            moving_avg = pd.Series(self.training_stats['rewards']).rolling(window=window).mean()
-            axes[1, 1].plot(moving_avg)
-            axes[1, 1].set_title(f'moving average rewards (window={window})')
-            axes[1, 1].set_xlabel('episode')
-            axes[1, 1].set_ylabel('avg reward')
+    #     if len(self.training_stats['rewards']) > 10:
+    #         window = min(50, len(self.training_stats['rewards']) // 4)
+    #         moving_avg = pd.Series(self.training_stats['rewards']).rolling(window=window).mean()
+    #         axes[1, 1].plot(moving_avg)
+    #         axes[1, 1].set_title(f'moving average rewards (window={window})')
+    #         axes[1, 1].set_xlabel('episode')
+    #         axes[1, 1].set_ylabel('avg reward')
 
-        plt.tight_layout()
-        plt.show()
+    #     plt.tight_layout()
+    #     plt.show()
 
 
 def main():
@@ -350,7 +348,7 @@ def main():
     mean_r, std_r = agent.evaluate(task, num_episodes=20)
     print(f"final performance: {mean_r:.2f} ± {std_r:.2f}")
 
-    agent.plot_training_progress()
+    # agent.plot_training_progress()
     return agent
 
 
