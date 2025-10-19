@@ -8,7 +8,8 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from collections import deque
 
-BANDIT_INDEX = {'A': 0, 'B': 1, 'C': 2}   # CHANGED: reuse map instead of rebuilding repeatedly
+# fixed mapping for 3-bandit setup
+BANDIT_INDEX = {'A': 0, 'B': 1, 'C': 2}
 BANDIT_NAMES = ['A', 'B', 'C']
 
 
@@ -18,118 +19,85 @@ class Bandit:
         self.true_prob = true_prob
 
     def sample_reward(self):
-        """Sample reward from the bandit's true probability."""
+        # sample bernoulli reward
         return float(np.random.rand() < self.true_prob)
 
 
 class BanditTask:
+    # block-wise nonstationary bandits (per paper design)
     def __init__(self, n_blocks=30, trials_per_block=15):
         self.n_blocks = n_blocks
         self.trials_per_block = trials_per_block
         self.log = []
 
     def generate_bandits(self):
+        # 3 bandits with probs in [0.2, 0.8]
         names = ['A', 'B', 'C']
         probs = np.round(np.random.uniform(0.2, 0.8, size=3), 2)
         return [Bandit(names[i], probs[i]) for i in range(3)]
 
     def summarize(self):
-        print("BanditTask ready for RL agent training")
+        print("bandit task ready")
 
 
 class StateEncoder(nn.Module):
-    """
-    Encodes the 3-step bandit game state into neural network input.
-    8-D input like the original: 3 (bandit one-hot) + 2 (block/trial) + 3 (step type).
-    """
-    def __init__(self, state_dim=8, norm_blocks=30, norm_trials=15):
+    # 9-d: 3 avail + 2 block/trial + 3 step flags + 1 reward
+    # reward is 0 except at feedback
+    def __init__(self, state_dim=9, norm_blocks=30, norm_trials=15):
         super().__init__()
         self.state_dim = state_dim
-        # CHANGED: make normalization dynamic (no hard-coded 30/15)
         self.norm_blocks = float(norm_blocks)
         self.norm_trials = float(norm_trials)
 
-    def _bt_enc(self, block_info):
-        # CHANGED: dynamic scaling using provided maxima
+    def _bt(self, info):
         return torch.tensor(
-            [block_info['block'] / self.norm_blocks, block_info['trial'] / self.norm_trials],
+            [info['block'] / self.norm_blocks, info['trial'] / self.norm_trials],
             dtype=torch.float32
         )
 
-    # encode stimulus presentation step
-    def encode_stimulus_step(self, available_bandits, block_info):
-        # One-hot encoding of available bandits [A, B, C]
-        bandit_encoding = torch.zeros(3, dtype=torch.float32)
-        for bandit in available_bandits:
-            bandit_encoding[BANDIT_INDEX[bandit]] = 1.0
+    def _avail(self, avail):
+        x = torch.zeros(3, dtype=torch.float32)
+        for b in avail:
+            x[BANDIT_INDEX[b]] = 1.0
+        return x
 
-        block_encoding = self._bt_enc(block_info)
+    def stim(self, avail, info):
+        # step: stimulus (reward slot zero)
+        return torch.cat([
+            self._avail(avail), self._bt(info),
+            torch.tensor([1.0, 0.0, 0.0]), torch.tensor([0.0])
+        ])
 
-        # Step type encoding (stimulus=1, decision=0, feedback=0)
-        step_encoding = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+    def decision(self, avail, info):
+        # step: decision (reward slot zero)
+        return torch.cat([
+            self._avail(avail), self._bt(info),
+            torch.tensor([0.0, 1.0, 0.0]), torch.tensor([0.0])
+        ])
 
-        return torch.cat([bandit_encoding, block_encoding, step_encoding])
-
-    # encode making a choice
-    def encode_decision_step(self, available_bandits, block_info):
-        bandit_encoding = torch.zeros(3, dtype=torch.float32)
-        for bandit in available_bandits:
-            bandit_encoding[BANDIT_INDEX[bandit]] = 1.0
-
-        block_encoding = self._bt_enc(block_info)
-
-        # Step type encoding (stimulus=0, decision=1, feedback=0)
-        step_encoding = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32)
-
-        return torch.cat([bandit_encoding, block_encoding, step_encoding])
-
-    # encode getting feedback
-    def encode_feedback_step(self, reward, block_info):
-        bandit_encoding = torch.zeros(3, dtype=torch.float32)
-        block_encoding = self._bt_enc(block_info)
-
-        # Step type and reward encoding
-        step_encoding = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32)
-
-        # NOTE: original code appended reward to the state, making 9 dims.
-        # We keep the original declared 8-D interface and *exclude* reward here
-        # to remain consistent with policy input (decision step). If desired,
-        # you can create a separate critic input that includes reward.
-        # To preserve original behavior, comment the above NOTE and uncomment below.
-        # reward_encoding = torch.tensor([float(reward)], dtype=torch.float32)
-        # return torch.cat([bandit_encoding, block_encoding, step_encoding, reward_encoding])
-
-        return torch.cat([bandit_encoding, block_encoding, step_encoding])
+    def feedback(self, reward, info):
+        # step: feedback (reward slot carries outcome)
+        return torch.cat([
+            torch.zeros(3), self._bt(info),
+            torch.tensor([0.0, 0.0, 1.0]), torch.tensor([float(reward)])
+        ])
 
 
 class LSTMPolicyNetwork(nn.Module):
-    """LSTM-based policy network for the 3-step bandit task."""
-    def __init__(self, input_size=8, hidden_size=128, num_layers=2, dropout=0.1):
+    # lstm backbone with policy + value heads
+    def __init__(self, input_size=9, hidden_size=128, num_layers=2, dropout=0.1):
         super().__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-
-        # LSTM layers
         self.lstm = nn.LSTM(
             input_size, hidden_size, num_layers,
-            batch_first=True, dropout=dropout if num_layers > 1 else 0
+            batch_first=True, dropout=dropout if num_layers > 1 else 0.0
         )
-
-        # Attention mechanism
-        self.attention = nn.MultiheadAttention(hidden_size, num_heads=8, batch_first=True)
-        # NOTE: With seq_len=1 at training time, attention is effectively a no-op,
-        # but we keep it for future sequence parsing plans.
-
-        # Policy head
+        self.attn = nn.MultiheadAttention(hidden_size, num_heads=8, batch_first=True)
         self.policy_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_size // 2, 3)  # 3 bandits
         )
-
-        # Value head for baseline
         self.value_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(),
@@ -139,355 +107,257 @@ class LSTMPolicyNetwork(nn.Module):
 
     def forward(self, x, hidden=None, mask=None):
         # x: (batch, seq_len, input_size)
-        lstm_out, hidden = self.lstm(x, hidden)
+        out, hidden = self.lstm(x, hidden)
+        attn_out, _ = self.attn(out, out, out)
+        out = out + attn_out  # residual
+        logits = self.policy_head(out)  # (b,s,3)
+        values = self.value_head(out)   # (b,s,1)
 
-        # Self-attention
-        attn_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
-
-        # Residual connection
-        out = lstm_out + attn_out
-
-        # Policy and value outputs
-        policy_logits = self.policy_head(out)
-        values = self.value_head(out)
-
-        # Apply mask if provided (for unavailable bandits)
+        # mask invalid actions if provided
         if mask is not None:
-            # CHANGED: avoid -inf for better numerics during softmax/logsoftmax
-            policy_logits = policy_logits.masked_fill(~mask, -1e9)
+            logits = logits.masked_fill(~mask, -1e9)
 
-        return policy_logits, values, hidden
+        return logits, values, hidden
 
 
 class RLAgent:
     def __init__(
         self,
-        input_size=8,
+        input_size=9,
         hidden_size=128,
-        lr=0.001,
+        lr=1e-3,
         gamma=0.99,
         entropy_coef=0.01,
         value_coef=0.5,
         norm_blocks=30,
         norm_trials=15
     ):
+        
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # Neural network components
+        # model parts
         self.state_encoder = StateEncoder(state_dim=input_size, norm_blocks=norm_blocks, norm_trials=norm_trials)
-        self.policy_network = LSTMPolicyNetwork(input_size, hidden_size).to(self.device)
+        self.policy_network = LSTMPolicyNetwork(input_size=input_size, hidden_size=hidden_size).to(self.device)
         self.optimizer = optim.Adam(self.policy_network.parameters(), lr=lr)
 
-        # RL hyperparameters
+        # rl hyperparams
         self.gamma = gamma
         self.entropy_coef = entropy_coef
         self.value_coef = value_coef
 
-        # Experience buffer
-        self.experience_buffer = deque(maxlen=10000)
-
-        # Training statistics
+        # logs
         self.training_stats = {
             'rewards': [],
             'losses': [],
             'entropies': []
         }
 
-    def _build_action_mask(self, available_bandits, batch_shape=(1, 1)):
-        """Build boolean mask with True for available actions."""
+    def _build_action_mask(self, avail, batch_shape=(1, 1)):
+        # true for available actions
         mask = torch.zeros(*batch_shape, 3, dtype=torch.bool, device=self.device)
-        for b in available_bandits:
+        for b in avail:
             mask[..., BANDIT_INDEX[b]] = True
         return mask
 
-    def get_action(self, state, available_bandits, hidden=None, training=True):
-        """Get action from policy network."""
-        with torch.set_grad_enabled(training):
-            if training:
-                self.policy_network.train()
-            else:
-                self.policy_network.eval()
-
-            # Encode state -> (1,1,state_dim)
-            state_tensor = state.to(dtype=torch.float32, device=self.device).unsqueeze(0).unsqueeze(0)
-
-            # Create mask for available bandits
-            mask = self._build_action_mask(available_bandits, batch_shape=(1, 1))
-
-            # Forward pass
-            policy_logits, values, hidden = self.policy_network(state_tensor, hidden, mask)
-
-            # CHANGED: detach hidden so we don't backprop across the whole episode
-            if hidden is not None:
-                hidden = (hidden[0].detach(), hidden[1].detach())
-
-            # Sample/select action
-            action_probs = F.softmax(policy_logits, dim=-1)  # (1,1,3)
-            if training:
-                action_dist = torch.distributions.Categorical(action_probs.squeeze(1))  # (1,3) -> batch of 1
-                action = action_dist.sample()  # (1,)
-                log_prob = action_dist.log_prob(action)  # (1,)
-                entropy = action_dist.entropy()  # (1,)
-                action_idx = action.item()
-            else:
-                action_idx = action_probs.argmax(dim=-1).item()
-                log_prob = None
-                entropy = None
-
-            return action_idx, log_prob, values, hidden, entropy
-
-    def store_experience(self, state, action, reward, action_mask, done):
-        """
-        Store minimal experience needed for updates.
-        CHANGED: we store (state, action, reward, action_mask, done) only.
-        """
-        self.experience_buffer.append({
-            'state': state.detach().cpu().numpy() if isinstance(state, torch.Tensor) else np.asarray(state, dtype=np.float32),
-            'action': int(action),
-            'reward': float(reward),
-            'action_mask': np.asarray(action_mask, dtype=bool),
-            'done': bool(done),
-        })
-
-    def update_policy(self, batch_size=32):
-        """
-        Update policy using collected experiences.
-        CHANGED: (1) proper LSTM input shape (B,1,8),
-                 (2) use true action mask,
-                 (3) normalize advantages,
-                 (4) remove requires_grad on inputs.
-        """
-        if len(self.experience_buffer) < batch_size:
-            return
-
-        batch = random.sample(self.experience_buffer, batch_size)
-
-        states_np = np.stack([exp['state'] for exp in batch], axis=0)         # (B, 8)
-        actions = torch.tensor([exp['action'] for exp in batch], dtype=torch.long, device=self.device)  # (B,)
-        rewards = torch.tensor([exp['reward'] for exp in batch], dtype=torch.float32, device=self.device)  # (B,)
-        masks_np = np.stack([exp['action_mask'] for exp in batch], axis=0)    # (B, 3) booleans
-
-        states = torch.tensor(states_np, dtype=torch.float32, device=self.device).unsqueeze(1)        # (B, 1, 8)
-        action_mask = torch.tensor(masks_np, dtype=torch.bool, device=self.device).unsqueeze(1)       # (B, 1, 3)
-
-        # Forward (we don't carry hidden across samples here)
-        policy_logits, values, _ = self.policy_network(states, hidden=None, mask=action_mask)
-        # policy_logits: (B,1,3) masked already inside forward
-        # values: (B,1,1)
-
-        # Compute probabilities/log-probabilities
-        log_probs = F.log_softmax(policy_logits, dim=-1)[:, 0, :]  # (B,3)
-        probs = torch.exp(log_probs)                                # (B,3)
-
-        # Select taken actions
-        selected_log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)  # (B,)
-        values = values[:, 0, 0]  # (B,)
-
-        # For a contextual bandit, 1-step return = reward
-        returns = rewards
-
-        # Advantage (normalize for stability)
-        advantages = returns - values.detach()
-        adv_mean = advantages.mean()
-        adv_std = advantages.std().clamp_min(1e-6)
-        advantages = (advantages - adv_mean) / adv_std
-
-        # Losses
-        policy_loss = -(selected_log_probs * advantages).mean()
-        value_loss = F.mse_loss(values, returns)
-
-        # Entropy bonus (encourage exploration)
-        entropy = -(probs * log_probs).sum(dim=-1).mean()
-        
-        # total loss function
-        total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy  # CHANGED: correct sign
-
-        # Backprop
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), max_norm=1.0)
-        self.optimizer.step()
-
-        # Stats
-        self.training_stats['losses'].append(total_loss.item())
-        self.training_stats['entropies'].append(entropy.item())
-
-        return total_loss.item()
-
     def train_episode(self, task, render=False):
-        """Train the agent on one episode of the bandit task."""
-        episode_reward = 0
-        episode_steps = []
-
-        hidden = None
+        # train one episode across all blocks
+        episode_reward = 0.0
 
         for block in range(task.n_blocks):
             bandits = task.generate_bandits()
             if render:
                 print(f"Block {block+1}: {[f'{b.name}:{b.true_prob}' for b in bandits]}")
 
+            # reset recurrent state at block start
+            hidden = None
+
+            # per-block decision-step accumulators
+            saved_logps = []
+            saved_values = []
+            saved_rewards = []
+            saved_entropies = []
+
             for trial in range(task.trials_per_block):
-                # Sample two bandits
+                # sample two bandits this trial
                 A, B = random.sample(bandits, 2)
-                available_bandits = [A.name, B.name]
+                avail = [A.name, B.name]
+                info = {'block': block, 'trial': trial}
 
-                # Stimulus & decision states
-                block_info = {'block': block, 'trial': trial}
-                _ = self.state_encoder.encode_stimulus_step(available_bandits, block_info)  # kept for completeness
-                decision_state = self.state_encoder.encode_decision_step(available_bandits, block_info)
+                # 1) stimulus step
+                x_stim = self.state_encoder.stim(avail, info).to(self.device).view(1, 1, -1)
+                mask_stim = self._build_action_mask(avail, batch_shape=(1, 1))
+                _, _, hidden = self.policy_network(x_stim, hidden, mask_stim)
 
-                # Choose action
-                action, log_prob, value, hidden, entropy = self.get_action(
-                    decision_state, available_bandits, hidden, training=True
-                )
+                # 2) decision step
+                x_dec = self.state_encoder.decision(avail, info).to(self.device).view(1, 1, -1)
+                mask_dec = self._build_action_mask(avail, batch_shape=(1, 1))
+                logits, values, hidden = self.policy_network(x_dec, hidden, mask_dec)  # (1,1,3), (1,1,1)
 
-                # Convert action index to bandit name
-                chosen_bandit_name = BANDIT_NAMES[action]
+                # masked logits for valid arms
+                dec_logits = logits[:, -1, :]                       # (1,3)
+                dec_logits = dec_logits.masked_fill(~mask_dec[:, -1, :], -1e9)
+                log_probs = F.log_softmax(dec_logits, dim=-1)       # (1,3)
+                probs = log_probs.exp()                              # (1,3)
 
-                # Sanity: chosen should be available since logits were masked
-                if chosen_bandit_name not in available_bandits:
-                    # NOTE: This should not happen due to masking. Keep fallback with a warning.
-                    # print("Warning: sampled unavailable action; falling back to a valid one.")
-                    chosen_bandit_name = random.choice(available_bandits)
+                # sample action for training
+                dist = torch.distributions.Categorical(probs)
+                action = dist.sample()                               # (1,)
+                logp = dist.log_prob(action)                         # (1,)
+                entropy = dist.entropy()                             # (1,)
 
-                chosen = A if chosen_bandit_name == A.name else B
+                # map index to chosen bandit
+                chosen_name = BANDIT_NAMES[action.item()]
+                if chosen_name not in avail:
+                    chosen_name = random.choice(avail)
+                chosen = A if chosen_name == A.name else B
 
-                # Get reward
-                reward = chosen.sample_reward()
+                # 3) env feedback step
+                r = chosen.sample_reward()
+                episode_reward += r
 
-                # Build and store action mask used at this step
-                action_mask_np = np.zeros(3, dtype=bool)
-                for b in available_bandits:
-                    action_mask_np[BANDIT_INDEX[b]] = True
+                x_fb = self.state_encoder.feedback(r, info).to(self.device).view(1, 1, -1)
+                # feedback has no valid actions; zero mask
+                mask_fb = torch.zeros_like(mask_dec)
+                _, _, hidden = self.policy_network(x_fb, hidden, mask_fb)
 
-                # Store minimal experience
-                self.store_experience(
-                    decision_state, action, reward, action_mask_np, done=False
-                )
+                # save decision-step tensors
+                saved_logps.append(logp.squeeze(0))
+                saved_values.append(values[:, -1, 0].squeeze(0))
+                saved_rewards.append(torch.tensor(float(r), device=self.device))
+                saved_entropies.append(entropy.squeeze(0))
 
-                episode_reward += reward
-                episode_steps.append({
-                    'block': block,
-                    'trial': trial,
-                    'chosen': chosen_bandit_name,
-                    'reward': reward,
-                    'available': available_bandits
-                })
+            # update once per block over all decision steps
+            if saved_logps:
+                logp_t = torch.stack(saved_logps)           # [T]
+                value_t = torch.stack(saved_values)         # [T]
+                reward_t = torch.stack(saved_rewards)       # [T]
+                entropy_t = torch.stack(saved_entropies).mean()
 
-                # CHANGED: update frequently with small batches for faster learning
-                if len(self.experience_buffer) >= 8:
-                    bs = min(32, len(self.experience_buffer))
-                    self.update_policy(batch_size=bs)
+                # returns equal rewards for bandit setting
+                returns = reward_t
+
+                # advantage with normalization
+                advantages = returns - value_t.detach()
+                advantages = (advantages - advantages.mean()) / (advantages.std().clamp_min(1e-6))
+
+                policy_loss = -(logp_t * advantages).mean()
+                value_loss = F.mse_loss(value_t, returns)
+                loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_t
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                
+                #prevention of exploading gradients
+                torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), 1.0)
+                self.optimizer.step()
+
+                self.training_stats['losses'].append(loss.item())
+                self.training_stats['entropies'].append(entropy_t.item())
 
         self.training_stats['rewards'].append(episode_reward)
-        return episode_reward, episode_steps
+        return episode_reward, None
 
     def evaluate(self, task, num_episodes=10):
-        """Evaluate the agent's performance (greedy)."""
+        # greedy evaluation (argmax at decision step)
         total_rewards = []
 
         for _ in range(num_episodes):
-            episode_reward = 0
-            hidden = None
-
+            episode_reward = 0.0
             for block in range(task.n_blocks):
                 bandits = task.generate_bandits()
+                hidden = None
 
                 for trial in range(task.trials_per_block):
                     A, B = random.sample(bandits, 2)
-                    available_bandits = [A.name, B.name]
+                    avail = [A.name, B.name]
+                    info = {'block': block, 'trial': trial}
 
-                    block_info = {'block': block, 'trial': trial}
-                    decision_state = self.state_encoder.encode_decision_step(available_bandits, block_info)
+                    # stimulus step
+                    x_stim = self.state_encoder.stim(avail, info).to(self.device).view(1, 1, -1)
+                    mask_stim = self._build_action_mask(avail, batch_shape=(1, 1))
+                    _, _, hidden = self.policy_network(x_stim, hidden, mask_stim)
 
-                    action, _, _, hidden, _ = self.get_action(
-                        decision_state, available_bandits, hidden, training=False
-                    )
+                    # decision step
+                    x_dec = self.state_encoder.decision(avail, info).to(self.device).view(1, 1, -1)
+                    mask_dec = self._build_action_mask(avail, batch_shape=(1, 1))
+                    logits, _, hidden = self.policy_network(x_dec, hidden, mask_dec)
+                    dec_logits = logits[:, -1, :].masked_fill(~mask_dec[:, -1, :], -1e9)
+                    action = dec_logits.argmax(dim=-1).item()
+                    chosen_name = BANDIT_NAMES[action]
+                    if chosen_name not in avail:
+                        chosen_name = random.choice(avail)
+                    chosen = A if chosen_name == A.name else B
 
-                    chosen_bandit_name = BANDIT_NAMES[action]
-                    if chosen_bandit_name not in available_bandits:
-                        chosen_bandit_name = random.choice(available_bandits)
-
-                    chosen = A if chosen_bandit_name == A.name else B
-                    reward = chosen.sample_reward()
-                    episode_reward += reward
+                    # feedback step
+                    r = chosen.sample_reward()
+                    episode_reward += r
+                    x_fb = self.state_encoder.feedback(r, info).to(self.device).view(1, 1, -1)
+                    mask_fb = torch.zeros_like(mask_dec)
+                    _, _, hidden = self.policy_network(x_fb, hidden, mask_fb)
 
             total_rewards.append(episode_reward)
 
         return np.mean(total_rewards), np.std(total_rewards)
 
-    def plot_training_progress(self):
-        """Plot training progress."""
-        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    # def plot_training_progress(self):
+    #     # simple plots for reward/loss/entropy
+    #     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
-        # Rewards
-        axes[0, 0].plot(self.training_stats['rewards'])
-        axes[0, 0].set_title('Episode Rewards')
-        axes[0, 0].set_xlabel('Episode')
-        axes[0, 0].set_ylabel('Total Reward')
+    #     axes[0, 0].plot(self.training_stats['rewards'])
+    #     axes[0, 0].set_title('episode rewards')
+    #     axes[0, 0].set_xlabel('episode')
+    #     axes[0, 0].set_ylabel('total reward')
 
-        # Losses
-        axes[0, 1].plot(self.training_stats['losses'])
-        axes[0, 1].set_title('Training Loss')
-        axes[0, 1].set_xlabel('Update')
-        axes[0, 1].set_ylabel('Loss')
+    #     axes[0, 1].plot(self.training_stats['losses'])
+    #     axes[0, 1].set_title('training loss')
+    #     axes[0, 1].set_xlabel('update')
+    #     axes[0, 1].set_ylabel('loss')
 
-        # Entropies
-        axes[1, 0].plot(self.training_stats['entropies'])
-        axes[1, 0].set_title('Policy Entropy')
-        axes[1, 0].set_xlabel('Update')
-        axes[1, 0].set_ylabel('Entropy')
+    #     axes[1, 0].plot(self.training_stats['entropies'])
+    #     axes[1, 0].set_title('policy entropy')
+    #     axes[1, 0].set_xlabel('update')
+    #     axes[1, 0].set_ylabel('entropy')
 
-        # Moving average rewards
-        if len(self.training_stats['rewards']) > 10:
-            window = min(50, len(self.training_stats['rewards']) // 4)
-            moving_avg = pd.Series(self.training_stats['rewards']).rolling(window=window).mean()
-            axes[1, 1].plot(moving_avg)
-            axes[1, 1].set_title(f'Moving Average Rewards (window={window})')
-            axes[1, 1].set_xlabel('Episode')
-            axes[1, 1].set_ylabel('Average Reward')
+    #     if len(self.training_stats['rewards']) > 10:
+    #         window = min(50, len(self.training_stats['rewards']) // 4)
+    #         moving_avg = pd.Series(self.training_stats['rewards']).rolling(window=window).mean()
+    #         axes[1, 1].plot(moving_avg)
+    #         axes[1, 1].set_title(f'moving average rewards (window={window})')
+    #         axes[1, 1].set_xlabel('episode')
+    #         axes[1, 1].set_ylabel('avg reward')
 
-        plt.tight_layout()
-        plt.show()
+    #     plt.tight_layout()
+    #     plt.show()
 
 
 def main():
-    """Main training loop."""
-    print("Initializing RL Agent for 3-Step Bandit Task...")
+    # main training loop
+    print("initializing rl agent for 3-step bandit...")
 
-    # Create task and agent
     task = BanditTask(n_blocks=30, trials_per_block=15)
     agent = RLAgent(
-        input_size=8,
+        input_size=9,
         hidden_size=128,
-        lr=0.001,
-        norm_blocks=task.n_blocks,     # CHANGED: dynamic scaling
+        lr=1e-3,
+        norm_blocks=task.n_blocks,
         norm_trials=task.trials_per_block
     )
 
-    # Training parameters
     num_episodes = 100
     eval_interval = 10
 
-    print(f"Training for {num_episodes} episodes...")
+    print(f"training for {num_episodes} episodes...")
+    for ep in range(num_episodes):
+        reward, _ = agent.train_episode(task, render=(ep % 20 == 0))
+        if ep % eval_interval == 0:
+            eval_mean, eval_std = agent.evaluate(task, num_episodes=5)
+            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f}")
 
-    for episode in range(num_episodes):
-        reward, steps = agent.train_episode(task, render=(episode % 20 == 0))
+    print("\nfinal evaluation:")
+    mean_r, std_r = agent.evaluate(task, num_episodes=20)
+    print(f"final performance: {mean_r:.2f} ± {std_r:.2f}")
 
-        # Evaluation
-        if episode % eval_interval == 0:
-            eval_reward, eval_std = agent.evaluate(task, num_episodes=5)
-            print(f"Episode {episode:3d} | Train Reward: {reward:6.1f} | "
-                  f"Eval Reward: {eval_reward:6.1f} ± {eval_std:4.1f}")
-
-    # Final evaluation
-    print("\nFinal Evaluation:")
-    final_reward, final_std = agent.evaluate(task, num_episodes=20)
-    print(f"Final Performance: {final_reward:.2f} ± {final_std:.2f}")
-
-    # Plot training progress
-    agent.plot_training_progress()
-
+    # agent.plot_training_progress()
     return agent
 
 
