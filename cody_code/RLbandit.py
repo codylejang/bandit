@@ -465,6 +465,10 @@ def main():
     agent.plot_training_progress()
     return agent
 
+#two future approaches:
+#   
+#look at weights in RNNs
+#shap analysis
 
 if __name__ == "__main__":
     trained_agent = main()
