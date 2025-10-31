@@ -110,8 +110,6 @@ class LSTMPolicyNetwork(nn.Module):
     def forward(self, x, hidden=None, mask=None):
         # x: (batch, seq_len, input_size)
         out, hidden = self.lstm(x, hidden)
-        attn_out, _ = self.attn(out, out, out)
-        out = out + attn_out  # residual
         logits = self.policy_head(out)  # (b,s,3)
         values = self.value_head(out)   # (b,s,1)
 
