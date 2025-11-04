@@ -127,7 +127,7 @@ class BanditTask:
 
                 # compute utilities: U = Q + uI * V  
                 qA, qB = A.expected_value(), B.expected_value()
-                vA, vB = A.uncertainty(),    B.uncertainty()
+                vA, vB = A.uncertainty(), B.uncertainty()
                 uA = qA + A.uI * vA
                 uB = qB + B.uI * vB
 
@@ -208,7 +208,7 @@ X_seq, Y_seq, seq_mask = build_3step_sequence(task.log)
 
 # init and train LSTM with input_size=5
 input_size, hidden_size, output_size = 5, 64, 3
-model     = LSTMAgent(input_size, hidden_size, output_size)
+model = LSTMAgent(input_size, hidden_size, output_size)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.005)
 
