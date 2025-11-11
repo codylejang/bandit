@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 # fixed mapping for 3-bandit setup
 BANDIT_INDEX = {'A': 0, 'B': 1, 'C': 2}
 BANDIT_NAMES = ['A', 'B', 'C']
+SEED = 408
 
 
 class Bandit:
@@ -25,6 +26,7 @@ class Bandit:
 
 class BanditTask:
     # block-wise nonstationary bandits (per paper design)
+    # per block: choose 2 from 3 stationary bandits, every trial
     def __init__(self, n_blocks=30, trials_per_block=15):
         self.n_blocks = n_blocks
         self.trials_per_block = trials_per_block
@@ -42,7 +44,7 @@ class BanditTask:
 
 class StateEncoder(nn.Module):
     # 8-d: 3 avail + 1 trial norm (where are you in a block) + 3 step flags (curr time step) + 1 reward
-    # keeping explicit state one-hots for now
+    # explicit state one-hots
     # reward is 0 except at feedback
     def __init__(self, state_dim=8, norm_trials=15):
         super().__init__()
@@ -50,6 +52,7 @@ class StateEncoder(nn.Module):
         self.norm_trials = float(norm_trials)
 
     def _avail(self, avail):
+        # one-hot of avail bandits
         x = torch.zeros(3, dtype=torch.float32)
         for b in avail:
             x[BANDIT_INDEX[b]] = 1.0
@@ -57,6 +60,7 @@ class StateEncoder(nn.Module):
 
     def _trial(self, info):
         # [0,1) scaling by default
+        # for relative position encoding
         t = info['trial'] / self.norm_trials
         return torch.tensor([t], dtype=torch.float32)
 
@@ -85,6 +89,7 @@ class StateEncoder(nn.Module):
 class LSTMPolicyNetwork(nn.Module):
     # lstm backbone with policy + value heads
     def __init__(self, input_size=8, hidden_size=128, num_layers=2, dropout=0.0): #disable dropout (prev 0.1)
+        # use super to init parent neural net module
         super().__init__()
         self.lstm = nn.LSTM(
             input_size, hidden_size, num_layers,
@@ -110,8 +115,8 @@ class LSTMPolicyNetwork(nn.Module):
     def forward(self, x, hidden=None, mask=None):
         # x: (batch, seq_len, input_size)
         out, hidden = self.lstm(x, hidden)
-        logits = self.policy_head(out)  # (b,s,3)
-        values = self.value_head(out)   # (b,s,1)
+        logits = self.policy_head(out)  # contextual bandit preferences, (b,s,3)
+        values = self.value_head(out)   # expected return, (b,s,1)
 
         # mask invalid actions if provided
         if mask is not None:
@@ -133,6 +138,7 @@ class BlockBeta:
         else:
             self.b += 1.0
 
+    #treated as data, rather than getter method
     @property
     def mean(self):
         return self.a / (self.a + self.b)
@@ -171,9 +177,7 @@ class RLAgent:
             'rewards': [],
             'losses': [],
             'entropies': [],
-            # rows for probing hidden states across steps
-            # (analysis-only; does not affect learning)
-            'probe_rows': []
+            'probe_rows': [] # rows for probing hidden states across steps (analysis-only; does not affect learning)
         }
 
     def _build_action_mask(self, avail, batch_shape=(1, 1)):
@@ -185,8 +189,14 @@ class RLAgent:
 
     def _valid_slice(self, logits, avail):
         # slice logits down to the 2 valid arms for unbiased sampling
-        idx = torch.tensor([BANDIT_INDEX[n] for n in avail], device=self.device)
-        return logits.index_select(1, idx), idx
+        # idx = torch.tensor([BANDIT_INDEX[n] for n in avail], device=self.device)
+        idx_list = []
+        for name in avail:
+            idx_list.append(BANDIT_INDEX[name])
+        
+        idx = torch.tensor(idx_list, device=self.device, dtype=torch.long)
+        valid_idx = logits.index_select(1, idx)
+        return valid_idx, idx
 
     def train_episode(self, task, render=False):
         # train one episode across all blocks
@@ -220,33 +230,44 @@ class RLAgent:
                 # 1) stimulus step
                 x_stim = self.state_encoder.stim(avail, info).to(self.device).view(1, 1, -1)
                 mask_stim = self._build_action_mask(avail, batch_shape=(1, 1))
-                _, _, hidden = self.policy_network(x_stim, hidden, mask_stim)
+                _, _, hidden = self.policy_network(x_stim, hidden, mask_stim) # extract hiddens from NN
                 # capture hidden at stimulus
                 h_stim = hidden[0][-1].squeeze(0).detach().cpu().numpy()
 
                 # 2) decision step
                 x_dec = self.state_encoder.decision(avail, info).to(self.device).view(1, 1, -1)
                 mask_dec = self._build_action_mask(avail, batch_shape=(1, 1))
+
+                # extract all vals from NN
                 logits, values, hidden = self.policy_network(x_dec, hidden, mask_dec)  # (1,1,3), (1,1,1)
                 # capture hidden and value at decision
                 h_dec = hidden[0][-1].squeeze(0).detach().cpu().numpy()
                 v_dec = values[:, -1, 0].detach().cpu().item()
 
-                # safe sampling over only the two valid arms (no fallback)
+                '''
+                humanlike softmax decision:
+                high level: softmax from the logits, then randomly draw from the resulting probabilities
+                
+                given 3-action logits, slice to the two currently offered arms (left, right),
+                convert to a 2-way prob distribution with log_softmax, sample an action, and compute
+                its log-probability and the distribution entropy for the policy loss
+                '''
                 dec_logits = logits[:, -1, :]                       # (1,3)
                 valid_logits, valid_idx = self._valid_slice(dec_logits, avail)  # (1,2)
                 log_probs = F.log_softmax(valid_logits, dim=-1)     # (1,2)
                 probs = log_probs.exp()                              # (1,2)
                 dist = torch.distributions.Categorical(probs)
-                action2 = dist.sample()                              # 0/1
+                action2 = dist.sample() # 0/1 left or right
                 logp = dist.log_prob(action2)
                 entropy = dist.entropy()
 
-                chosen_name = avail[action2.item()]
+                # map action to bandit name
+                chosen_name = avail[action2.item()] 
                 chosen = A if chosen_name == A.name else B
 
-                # compute simple analysis-only regressors before outcome
+                # ANALYSIS ONLY: compute simple regressors before outcome
                 # q and uncertainty from per-arm beta (within block)
+                # here, Q is an estimate from logits
                 QL, QR = beta_map[A.name].mean, beta_map[B.name].mean
                 UL, UR = beta_map[A.name].var,  beta_map[B.name].var
                 dQ = float(QL - QR)
@@ -258,10 +279,11 @@ class RLAgent:
                 r = chosen.sample_reward()
                 episode_reward += r
 
+                # encode reward into memory
                 x_fb = self.state_encoder.feedback(r, info).to(self.device).view(1, 1, -1)
                 # feedback has no valid actions; zero mask
                 mask_fb = torch.zeros_like(mask_dec)
-                _, _, hidden = self.policy_network(x_fb, hidden, mask_fb)
+                _, _, hidden = self.policy_network(x_fb, hidden, mask_fb) #extract hidden from NN
                 # capture hidden at feedback
                 h_fb = hidden[0][-1].squeeze(0).detach().cpu().numpy()
 
@@ -303,11 +325,12 @@ class RLAgent:
 
                 # advantage with normalization
                 advantages = returns - value_t.detach()
-                advantages = (advantages - advantages.mean()) / (advantages.std().clamp_min(1e-6))
+                advantages = (advantages - advantages.mean()) / (advantages.std().clamp_min(1e-6)) 
 
+                #actor - critic RL
                 policy_loss = -(logp_t * advantages).mean()
                 value_loss = F.mse_loss(value_t, returns)
-                loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_t
+                loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_t # combined loss function
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -322,10 +345,10 @@ class RLAgent:
 
     def evaluate(self, task, num_episodes=10):
         # greedy evaluation (argmax at decision step)
-        self.policy_network.eval()  # new: eval mode (dropout off)
+        self.policy_network.eval()  # eval mode (dropout off)
         total_rewards = []
 
-        with torch.no_grad():  # new: disable grad for speed and stability
+        with torch.no_grad():  # disable grad for speed and stability
             for _ in range(num_episodes):
                 episode_reward = 0.0
                 for block in range(task.n_blocks):
@@ -428,7 +451,7 @@ def main():
     # main training loop
     print("initializing rl agent for 3-step bandit...")
 
-    np.random.seed(408); random.seed(408); torch.manual_seed(408)
+    np.random.seed(SEED); random.seed(SEED); torch.manual_seed(SEED)
 
     task = BanditTask(n_blocks=30, trials_per_block=15)
     agent = RLAgent(
@@ -443,6 +466,8 @@ def main():
 
     print(f"training for {num_episodes} episodes...")
     for ep in range(num_episodes):
+        # “how much reward the learning agent actually got this episode” 
+        # versus “how good the current policy would do if we deployed it greedily right now over all blocks”
         reward, _ = agent.train_episode(task, render=(ep % 20 == 0))
         if ep % eval_interval == 0:
             eval_mean, eval_std = agent.evaluate(task, num_episodes=5)
@@ -465,10 +490,15 @@ def main():
     agent.plot_training_progress()
     return agent
 
-#two future approaches:
-#   
+#future approaches:   
 #look at weights in RNNs
 #shap analysis
+#draw model architecture
+#analyze behavior in the same way as paper
+
+# question to address: why not standard Q learning
+# classic Q-learning was a poor fit for study and for the task’s structure. 
+# Actor-critic with an LSTM matches both the nonstationarity and  analysis goals better
 
 if __name__ == "__main__":
     trained_agent = main()
