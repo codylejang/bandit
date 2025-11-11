@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1400" height="800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Define gradients for different component types -->
+    <linearGradient id="inputGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e8f4f8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#d0e8f0;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="lstmGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#f0e8ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e0d0ff;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="hiddenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#fff0e8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ffe0d0;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="policyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e8ffe8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#d0ffd0;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="valueGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffe8e8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ffd0d0;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Arrow marker -->
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#333" />
+    </marker>
+    
+    <!-- Recurrent arrow marker -->
+    <marker id="recurrentArrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#8B4789" />
+    </marker>
+  </defs>
+  
+  <!-- Title -->
+  <text x="700" y="30" font-family="Arial, sans-serif" font-size="24" font-weight="bold" text-anchor="middle">
+    LSTM Policy Network Architecture for 3-Step Bandit Task
+  </text>
+  
+  <!-- Time step labels -->
+  <text x="250" y="70" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#666">
+    t=0: Stimulus
+  </text>
+  <text x="700" y="70" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#666">
+    t=1: Decision
+  </text>
+  <text x="1150" y="70" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#666">
+    t=2: Feedback
+  </text>
+  
+  <!-- STIMULUS STEP (t=0) -->
+  <g id="stimulus-step">
+    <!-- Input layer -->
+    <rect x="180" y="100" width="140" height="30" fill="url(#inputGrad)" stroke="#999" stroke-width="2" rx="5"/>
+    <text x="250" y="120" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Input (8D)</text>
+    
+    <!-- Input components breakdown - moved to left side -->
+    <text x="170" y="150" font-family="Arial, sans-serif" font-size="11" text-anchor="end" fill="#666">
+      [avail(3) | trial(1) | step(3) | reward(1)]
+    </text>
+    <text x="170" y="165" font-family="Arial, sans-serif" font-size="10" text-anchor="end" fill="#888">
+      [1,0,1 | 0.33 | 1,0,0 | 0]
+    </text>
+    
+    <!-- LSTM layer -->
+    <rect x="170" y="200" width="160" height="120" fill="url(#lstmGrad)" stroke="#8B4789" stroke-width="3" rx="10"/>
+    <text x="250" y="230" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle">LSTM</text>
+    <text x="250" y="250" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">(128 hidden)</text>
+    
+    <!-- LSTM internal components -->
+    <rect x="180" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="195" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">f</text>
+    
+    <rect x="215" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="230" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">i</text>
+    
+    <rect x="250" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="265" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">c</text>
+    
+    <rect x="285" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="300" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">o</text>
+    
+    <text x="250" y="300" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#666">2 layers</text>
+    
+    <!-- Hidden state -->
+    <rect x="180" y="350" width="140" height="30" fill="url(#hiddenGrad)" stroke="#CC6633" stroke-width="2" rx="5"/>
+    <text x="250" y="370" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Hidden h₀</text>
+    
+    <!-- Arrows -->
+    <line x1="250" y1="130" x2="250" y2="200" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="250" y1="320" x2="250" y2="350" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  </g>
+  
+  <!-- DECISION STEP (t=1) -->
+  <g id="decision-step">
+    <!-- Input layer -->
+    <rect x="630" y="100" width="140" height="30" fill="url(#inputGrad)" stroke="#999" stroke-width="2" rx="5"/>
+    <text x="700" y="120" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Input (8D)</text>
+    
+    <!-- Input values - moved to left side -->
+    <text x="620" y="150" font-family="Arial, sans-serif" font-size="11" text-anchor="end" fill="#666">
+      [avail(3) | trial(1) | step(3) | reward(1)]
+    </text>
+    <text x="620" y="165" font-family="Arial, sans-serif" font-size="10" text-anchor="end" fill="#888">
+      [1,0,1 | 0.33 | 0,1,0 | 0]
+    </text>
+    
+    <!-- LSTM layer -->
+    <rect x="620" y="200" width="160" height="120" fill="url(#lstmGrad)" stroke="#8B4789" stroke-width="3" rx="10"/>
+    <text x="700" y="230" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle">LSTM</text>
+    <text x="700" y="250" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">(128 hidden)</text>
+    
+    <!-- LSTM gates -->
+    <rect x="630" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="645" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">f</text>
+    
+    <rect x="665" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="680" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">i</text>
+    
+    <rect x="700" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="715" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">c</text>
+    
+    <rect x="735" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="750" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">o</text>
+    
+    <!-- Hidden state -->
+    <rect x="630" y="350" width="140" height="30" fill="url(#hiddenGrad)" stroke="#CC6633" stroke-width="2" rx="5"/>
+    <text x="700" y="370" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Hidden h₁</text>
+    
+    <!-- Policy Head -->
+    <rect x="540" y="420" width="100" height="80" fill="url(#policyGrad)" stroke="#4CAF50" stroke-width="2" rx="8"/>
+    <text x="590" y="440" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle">Policy Head</text>
+    <text x="590" y="458" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Linear(128,64)</text>
+    <text x="590" y="472" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">ReLU</text>
+    <text x="590" y="486" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Linear(64,3)</text>
+    
+    <!-- Value Head -->
+    <rect x="760" y="420" width="100" height="80" fill="url(#valueGrad)" stroke="#F44336" stroke-width="2" rx="8"/>
+    <text x="810" y="440" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle">Value Head</text>
+    <text x="810" y="458" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Linear(128,64)</text>
+    <text x="810" y="472" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">ReLU</text>
+    <text x="810" y="486" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Linear(64,1)</text>
+    
+    <!-- Outputs -->
+    <rect x="540" y="530" width="100" height="30" fill="#e8ffe8" stroke="#4CAF50" stroke-width="2" rx="5"/>
+    <text x="590" y="550" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">Logits (3D)</text>
+    
+    <rect x="760" y="530" width="100" height="30" fill="#ffe8e8" stroke="#F44336" stroke-width="2" rx="5"/>
+    <text x="810" y="550" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">Value (1D)</text>
+    
+    <!-- Mask -->
+    <rect x="480" y="530" width="50" height="30" fill="#f0f0f0" stroke="#666" stroke-width="1" rx="5"/>
+    <text x="505" y="550" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Mask</text>
+    
+    <!-- Action selection -->
+    <rect x="540" y="590" width="100" height="50" fill="#f0fff0" stroke="#4CAF50" stroke-width="2" rx="5"/>
+    <text x="590" y="608" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">Softmax</text>
+    <text x="590" y="625" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Sample→Action</text>
+    
+    <!-- Arrows -->
+    <line x1="700" y1="130" x2="700" y2="200" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="700" y1="320" x2="700" y2="350" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="660" y1="380" x2="610" y2="420" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="740" y1="380" x2="790" y2="420" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="590" y1="500" x2="590" y2="530" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="810" y1="500" x2="810" y2="530" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="530" y1="545" x2="540" y2="545" stroke="#666" stroke-width="1" marker-end="url(#arrowhead)"/>
+    <line x1="590" y1="560" x2="590" y2="590" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  </g>
+  
+  <!-- FEEDBACK STEP (t=2) -->
+  <g id="feedback-step">
+    <!-- Input layer -->
+    <rect x="1080" y="100" width="140" height="30" fill="url(#inputGrad)" stroke="#999" stroke-width="2" rx="5"/>
+    <text x="1150" y="120" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Input (8D)</text>
+    
+    <!-- Input values - moved to left side -->
+    <text x="1070" y="150" font-family="Arial, sans-serif" font-size="11" text-anchor="end" fill="#666">
+      [avail(3) | trial(1) | step(3) | reward(1)]
+    </text>
+    <text x="1070" y="165" font-family="Arial, sans-serif" font-size="10" text-anchor="end" fill="#888">
+      [0,0,0 | 0.33 | 0,0,1 | 1]
+    </text>
+    
+    <!-- LSTM layer -->
+    <rect x="1070" y="200" width="160" height="120" fill="url(#lstmGrad)" stroke="#8B4789" stroke-width="3" rx="10"/>
+    <text x="1150" y="230" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle">LSTM</text>
+    <text x="1150" y="250" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">(128 hidden)</text>
+    
+    <!-- LSTM gates -->
+    <rect x="1080" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="1095" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">f</text>
+    
+    <rect x="1115" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="1130" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">i</text>
+    
+    <rect x="1150" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="1165" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">c</text>
+    
+    <rect x="1185" y="260" width="30" height="20" fill="#fff" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="1200" y="274" font-family="Arial, sans-serif" font-size="9" text-anchor="middle">o</text>
+    
+    <!-- Hidden state -->
+    <rect x="1080" y="350" width="140" height="30" fill="url(#hiddenGrad)" stroke="#CC6633" stroke-width="2" rx="5"/>
+    <text x="1150" y="370" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Hidden h₂</text>
+    
+    <!-- Arrows -->
+    <line x1="1150" y1="130" x2="1150" y2="200" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="1150" y1="320" x2="1150" y2="350" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  </g>
+  
+  <!-- Recurrent connections -->
+  <path d="M 320,365 Q 475,365 475,260 Q 475,260 620,260" 
+        stroke="#8B4789" stroke-width="3" fill="none" marker-end="url(#recurrentArrow)" stroke-dasharray="5,3"/>
+  <text x="470" y="300" font-family="Arial, sans-serif" font-size="12" fill="#8B4789" font-weight="bold">h₀</text>
+  
+  <path d="M 770,365 Q 925,365 925,260 Q 925,260 1070,260" 
+        stroke="#8B4789" stroke-width="3" fill="none" marker-end="url(#recurrentArrow)" stroke-dasharray="5,3"/>
+  <text x="920" y="300" font-family="Arial, sans-serif" font-size="12" fill="#8B4789" font-weight="bold">h₁</text>
+  
+  <!-- Legend -->
+  <g id="legend" transform="translate(50, 650)">
+    <text x="0" y="0" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Legend:</text>
+    
+    <rect x="0" y="10" width="30" height="15" fill="url(#inputGrad)" stroke="#999" stroke-width="1" rx="3"/>
+    <text x="40" y="22" font-family="Arial, sans-serif" font-size="12">State Encoder Output</text>
+    
+    <rect x="0" y="35" width="30" height="15" fill="url(#lstmGrad)" stroke="#8B4789" stroke-width="1" rx="3"/>
+    <text x="40" y="47" font-family="Arial, sans-serif" font-size="12">LSTM Layer (Recurrent)</text>
+    
+    <rect x="0" y="60" width="30" height="15" fill="url(#hiddenGrad)" stroke="#CC6633" stroke-width="1" rx="3"/>
+    <text x="40" y="72" font-family="Arial, sans-serif" font-size="12">Hidden State</text>
+    
+    <rect x="200" y="10" width="30" height="15" fill="url(#policyGrad)" stroke="#4CAF50" stroke-width="1" rx="3"/>
+    <text x="240" y="22" font-family="Arial, sans-serif" font-size="12">Policy Head (Actions)</text>
+    
+    <rect x="200" y="35" width="30" height="15" fill="url(#valueGrad)" stroke="#F44336" stroke-width="1" rx="3"/>
+    <text x="240" y="47" font-family="Arial, sans-serif" font-size="12">Value Head (Predictions)</text>
+    
+    <line x1="200" y1="65" x2="230" y2="65" stroke="#8B4789" stroke-width="3" marker-end="url(#recurrentArrow)" stroke-dasharray="5,3"/>
+    <text x="240" y="70" font-family="Arial, sans-serif" font-size="12">Recurrent Connection</text>
+  </g>
+  
+  <!-- Key information box -->
+  <g id="info-box" transform="translate(450, 650)">
+    <rect x="0" y="0" width="500" height="100" fill="#f9f9f9" stroke="#666" stroke-width="1" rx="5"/>
+    <text x="10" y="20" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Key Architecture Details:</text>
+    <text x="10" y="40" font-family="Arial, sans-serif" font-size="11">• Input: 8D vector = 3D availability + 1D trial progress + 3D step indicator + 1D reward</text>
+    <text x="10" y="55" font-family="Arial, sans-serif" font-size="11">• LSTM: 2 layers, 128 hidden units, maintains state across time steps within block</text>
+    <text x="10" y="70" font-family="Arial, sans-serif" font-size="11">• Policy Head: Produces 3 logits (one per bandit), masked for available options</text>
+    <text x="10" y="85" font-family="Arial, sans-serif" font-size="11">• Value Head: Estimates expected return from current state</text>
+  </g>
+  
+  <!-- Training details -->
+  <g id="training-box" transform="translate(970, 650)">
+    <rect x="0" y="0" width="380" height="100" fill="#f9f9f9" stroke="#666" stroke-width="1" rx="5"/>
+    <text x="10" y="20" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Training Process:</text>
+    <text x="10" y="40" font-family="Arial, sans-serif" font-size="11">• Actor-Critic with advantage estimation</text>
+    <text x="10" y="55" font-family="Arial, sans-serif" font-size="11">• Policy gradient: -log(π) × advantage</text>
+    <text x="10" y="70" font-family="Arial, sans-serif" font-size="11">• Value loss: MSE(predicted, actual)</text>
+    <text x="10" y="85" font-family="Arial, sans-serif" font-size="11">• Hidden state resets between blocks</text>
+  </g>
+</svg>
