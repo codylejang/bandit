@@ -238,8 +238,7 @@ class RLAgent:
                 x_dec = self.state_encoder.decision(avail, info).to(self.device).view(1, 1, -1)
                 mask_dec = self._build_action_mask(avail, batch_shape=(1, 1))
 
-                # extract all vals from NN
-                logits, values, hidden = self.policy_network(x_dec, hidden, mask_dec)  # (1,1,3), (1,1,1)
+                logits, values, hidden = self.policy_network(x_dec, hidden, mask_dec)# extract all vals from NN, (1,1,3), (1,1,1)
                 # capture hidden and value at decision
                 h_dec = hidden[0][-1].squeeze(0).detach().cpu().numpy()
                 v_dec = values[:, -1, 0].detach().cpu().item()
@@ -500,5 +499,9 @@ def main():
 # classic Q-learning was a poor fit for study and for the task’s structure. 
 # Actor-critic with an LSTM matches both the nonstationarity and  analysis goals better
 
+# flag where novel arm is introduced
+# novelty element (when does new arm appear)
+
+# does graph reflect trained network after an episode, greedy over all episodes (probably does)
 if __name__ == "__main__":
     trained_agent = main()
