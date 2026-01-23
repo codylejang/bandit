@@ -22,3 +22,6 @@ luis_code/__pycache__
 luis_code/.venv
 /data/aquinoshareddata
 probe_rows.csv
+probe_rows_greedy.csv
+
+.DS_Store

@@ -140,35 +140,66 @@ class StateEncoder(nn.Module):
 
 
 class LSTMPolicyNetwork(nn.Module):
-    # lstm backbone with policy (2 actions: left/right) + value head
+    """
+    lstm backbone with policy (2 actions: left/right) + value head
+
+    requested probes:
+      - capture the vector that feeds the heads (lstm output)
+      - capture head hidden activations (pre/post relu) during greedy or training
+      - capture logits/value outputs
+    """
+
     def __init__(self, input_size, hidden_size=128, num_layers=2, dropout=0.0, num_actions=2):
         super().__init__()
+        self.hidden_size = int(hidden_size)
+        self.head_hidden = self.hidden_size // 2
+
         self.lstm = nn.LSTM(
             input_size=input_size,
-            hidden_size=hidden_size,
+            hidden_size=self.hidden_size,
             num_layers=num_layers,
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
         )
 
-        self.policy_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, num_actions),  # left vs right
-        )
-        self.value_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, 1),
-        )
+        # explicit heads so we can probe intermediates
+        self.ph_fc1 = nn.Linear(self.hidden_size, self.head_hidden)
+        self.ph_relu = nn.ReLU()
+        self.ph_drop = nn.Dropout(dropout)
+        self.ph_fc2 = nn.Linear(self.head_hidden, num_actions)
 
-    def forward(self, x, hidden=None):
+        self.vh_fc1 = nn.Linear(self.hidden_size, self.head_hidden)
+        self.vh_relu = nn.ReLU()
+        self.vh_drop = nn.Dropout(dropout)
+        self.vh_fc2 = nn.Linear(self.head_hidden, 1)
+
+    def forward(self, x, hidden=None, return_activations=False):
         out, hidden = self.lstm(x, hidden)  # out: (b,s,h)
-        logits = self.policy_head(out)      # (b,s,2)
-        values = self.value_head(out)       # (b,s,1)
-        return logits, values, hidden
+
+        # policy head with optional intermediates
+        ph_pre = self.ph_fc1(out)           # (b,s,hh)
+        ph_post = self.ph_relu(ph_pre)      # (b,s,hh)
+        ph_post = self.ph_drop(ph_post)
+        logits = self.ph_fc2(ph_post)       # (b,s,2)
+
+        # value head with optional intermediates
+        vh_pre = self.vh_fc1(out)           # (b,s,hh)
+        vh_post = self.vh_relu(vh_pre)      # (b,s,hh)
+        vh_post = self.vh_drop(vh_post)
+        values = self.vh_fc2(vh_post)       # (b,s,1)
+
+        if not return_activations:
+            return logits, values, hidden
+
+        # note: out is the true "hidden activation feeding into the heads"
+        activations = {
+            "lstm_out": out,
+            "ph_pre": ph_pre,
+            "ph_post": ph_post,
+            "vh_pre": vh_pre,
+            "vh_post": vh_post,
+        }
+        return logits, values, hidden, activations
 
 
 class BlockBeta:
@@ -220,7 +251,6 @@ class RLAgent:
         self.state_encoder = StateEncoder(norm_trials=norm_trials)
 
         # identity embeddings for left/right options and chosen option at feedback
-        # learned lookup table: maps stim_id to embedding vector
         self.id_embedding = nn.Embedding(self.num_stimuli, self.id_emb_dim).to(self.device)
 
         # total input dim = left_emb + right_emb + base_state
@@ -247,7 +277,8 @@ class RLAgent:
             "rewards": [],
             "losses": [],
             "entropies": [],
-            "probe_rows": [],
+            "probe_rows": [],        # training (sampled) probes
+            "greedy_probe_rows": [], # greedy probes (eval)
         }
 
     """
@@ -266,10 +297,13 @@ class RLAgent:
     - feedback step:
         - identity features encode the chosen identity only (chosen_id embedded in the left slot, right slot zeroed)
         - base state marks "feedback" and reward is the observed outcome
-    - why feedback is encoded this way:
-        - it tells the lstm which identity the reward should be credited to 
-        - no action one-hots like prev iteration
+
+    probe additions:
+      - record lstm_out feeding heads at decision
+      - record head hidden activations (pre/post relu) at decision
+      - do this in training probes and in greedy probes
     """
+
     def _embed_pair(self, left_id: int, right_id: int) -> torch.Tensor:
         left_t = torch.tensor([left_id], device=self.device, dtype=torch.long)
         right_t = torch.tensor([right_id], device=self.device, dtype=torch.long)
@@ -290,14 +324,17 @@ class RLAgent:
         x = torch.cat([id_feats, base_state], dim=-1).unsqueeze(0)  # (1, 1, 2*emb+base_dim)
         return x
 
-    def train_episode(self, task: BanditTask, render=False):
+    def _tensor_to_list(self, t: torch.Tensor) -> list:
+        # safe conversion for csv logging
+        return t.detach().cpu().float().view(-1).tolist()
+
+    def train_episode(self, task: BanditTask, render=False, capture_probes=True):
         self.policy_network.train()
         self.id_embedding.train()
 
         task.reset_episode()
 
         # session-wide exposure counts for novelty regressor
-        # seen_count[sid] = number of times sid has been offered so far in this episode
         seen_count = defaultdict(int)
 
         episode_reward = 0.0
@@ -320,19 +357,18 @@ class RLAgent:
                 left_id, right_id = left_bandit.stim_id, right_bandit.stim_id
                 info = {"block": block, "trial": trial}
 
-                # novelty regressor:
-                # k is "number of prior exposures + 1" so first-ever presentation has k=1
+                # novelty regressor (analysis only)
                 kL = seen_count[left_id] + 1
                 kR = seen_count[right_id] + 1
                 novL = beta_var(float(kL), 1.0)
                 novR = beta_var(float(kR), 1.0)
                 dNov = float(novL - novR)
 
-                # increment exposures as soon as they are offered on screen
+                # increment exposures on offer
                 seen_count[left_id] += 1
                 seen_count[right_id] += 1
 
-                # identity features for stim/decision steps (left/right)
+                # identity features for stim/decision steps
                 id_feats = self._embed_pair(left_id, right_id)
 
                 # 1) stimulus step
@@ -340,14 +376,13 @@ class RLAgent:
                 _, _, hidden = self.policy_network(x_stim, hidden)
                 h_stim = hidden[0][-1].squeeze(0).detach().cpu().numpy()
 
-                # 2) decision step
+                # 2) decision step (capture head activations here)
                 x_dec = self._make_step_input(id_feats, self.state_encoder.decision(info))
-                logits, values, hidden = self.policy_network(x_dec, hidden)
+                logits, values, hidden, acts = self.policy_network(x_dec, hidden, return_activations=True)
 
                 h_dec = hidden[0][-1].squeeze(0).detach().cpu().numpy()
                 v_dec = values[:, -1, 0].detach().cpu().item()
 
-                # policy is always 2-way: choose left (0) vs right (1)
                 dec_logits = logits[:, -1, :]                 # (1,2)
                 log_probs = F.log_softmax(dec_logits, dim=-1) # (1,2)
                 probs = log_probs.exp()
@@ -371,11 +406,8 @@ class RLAgent:
                 # 3) feedback step
                 r = chosen.sample_reward()
                 episode_reward += r
-
-                # update block beta for chosen identity
                 beta_map[chosen_id].update(r)
 
-                # feed back chosen identity + reward into memory
                 id_feats_fb = self._embed_feedback(chosen_id)
                 x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info))
                 _, _, hidden = self.policy_network(x_fb, hidden)
@@ -387,34 +419,53 @@ class RLAgent:
                 saved_rewards.append(torch.tensor(float(r), device=self.device))
                 saved_entropies.append(entropy.squeeze(0))
 
-                self.training_stats["probe_rows"].append(
-                    {
-                        "episode_idx": len(self.training_stats["rewards"]),
-                        "block": block,
-                        "trial": trial,
-                        "left_id": int(left_id),
-                        "right_id": int(right_id),
-                        "choice_side": chosen_side,
-                        "chosen_id": int(chosen_id),
-                        "reward": float(r),
-                        "QL": float(QL),
-                        "QR": float(QR),
-                        "UncL": float(UL),
-                        "UncR": float(UR),
-                        "dQ": dQ,
-                        "dUnc": dUnc,
-                        "novL": float(novL),
-                        "novR": float(novR),
-                        "dNov": dNov,
-                        "seenL_before": int(kL - 1),
-                        "seenR_before": int(kR - 1),
-                        "logit_diff": logit_diff,
-                        "value_dec": float(v_dec),
-                        "h_stim": h_stim.tolist(),
-                        "h_dec": h_dec.tolist(),
-                        "h_fb": h_fb.tolist(),
-                    }
-                )
+                # probes (training, sampled actions)
+                if capture_probes:
+                    # key point: acts["lstm_out"][:, -1, :] is what feeds both heads
+                    # these are the downstream activations
+                    lstm_out_dec = acts["lstm_out"][:, -1, :]  # (1,h)
+                    ph_pre_dec = acts["ph_pre"][:, -1, :]      # (1,hh)
+                    ph_post_dec = acts["ph_post"][:, -1, :]    # (1,hh)
+                    vh_pre_dec = acts["vh_pre"][:, -1, :]      # (1,hh)
+                    vh_post_dec = acts["vh_post"][:, -1, :]    # (1,hh)
+
+                    self.training_stats["probe_rows"].append(
+                        {
+                            "mode": "train_sampled",
+                            "episode_idx": len(self.training_stats["rewards"]),
+                            "block": block,
+                            "trial": trial,
+                            "left_id": int(left_id),
+                            "right_id": int(right_id),
+                            "choice_side": chosen_side,
+                            "chosen_id": int(chosen_id),
+                            "reward": float(r),
+                            "QL": float(QL),
+                            "QR": float(QR),
+                            "UncL": float(UL),
+                            "UncR": float(UR),
+                            "dQ": dQ,
+                            "dUnc": dUnc,
+                            "novL": float(novL),
+                            "novR": float(novR),
+                            "dNov": dNov,
+                            "seenL_before": int(kL - 1),
+                            "seenR_before": int(kR - 1),
+                            "logit_left": float(dec_logits[0, 0].detach().cpu().item()),
+                            "logit_right": float(dec_logits[0, 1].detach().cpu().item()),
+                            "logit_diff": logit_diff,
+                            "value_dec": float(v_dec),
+                            "h_stim": h_stim.tolist(),
+                            "h_dec": h_dec.tolist(),
+                            "h_fb": h_fb.tolist(),
+                            # requested captures
+                            "lstm_out_dec": self._tensor_to_list(lstm_out_dec),
+                            "ph_pre_dec": self._tensor_to_list(ph_pre_dec),
+                            "ph_post_dec": self._tensor_to_list(ph_post_dec),
+                            "vh_pre_dec": self._tensor_to_list(vh_pre_dec),
+                            "vh_post_dec": self._tensor_to_list(vh_post_dec),
+                        }
+                    )
 
             # update once per block over all decision steps
             if saved_logps:
@@ -426,7 +477,7 @@ class RLAgent:
                 # contextual bandit: return is immediate reward
                 returns = reward_t
 
-                # advantage and normalization for stability
+                # advantage normalization for stability
                 advantages = returns - value_t.detach()
                 advantages = (advantages - advantages.mean()) / (advantages.std().clamp_min(1e-6))
 
@@ -495,20 +546,166 @@ class RLAgent:
 
         return float(np.mean(total_rewards)), float(np.std(total_rewards))
 
-    def build_probe_dataframe(self):
-        if len(self.training_stats.get("probe_rows", [])) == 0:
+    def run_greedy_probes(self, task: BanditTask, num_episodes=1, clear_existing=True):
+        """
+        greedy probe run (no backward, weights fixed)
+
+        key point:
+          - hidden state updates every step (stim/dec/fb), even in no_grad
+          - we capture the same "what feeds the head" + head hidden activations at decision
+        """
+        self.policy_network.eval()
+        self.id_embedding.eval()
+
+        if clear_existing:
+            self.training_stats["greedy_probe_rows"] = []
+
+        with torch.no_grad():
+            for ep_i in range(num_episodes):
+                task.reset_episode()
+                seen_count = defaultdict(int)  # keep the same novelty bookkeeping for analysis
+                episode_reward = 0.0
+
+                for block in range(task.n_blocks):
+                    task.start_block(block)
+                    hidden = None
+
+                    beta_map = {b.stim_id: BlockBeta() for b in task.current_bandits}
+
+                    for trial in range(task.trials_per_block):
+                        left_bandit, right_bandit = task.sample_two_bandits(trial)
+                        left_id, right_id = left_bandit.stim_id, right_bandit.stim_id
+                        info = {"block": block, "trial": trial}
+
+                        # novelty (analysis only)
+                        kL = seen_count[left_id] + 1
+                        kR = seen_count[right_id] + 1
+                        novL = beta_var(float(kL), 1.0)
+                        novR = beta_var(float(kR), 1.0)
+                        dNov = float(novL - novR)
+                        seen_count[left_id] += 1
+                        seen_count[right_id] += 1
+
+                        id_feats = self._embed_pair(left_id, right_id)
+
+                        # stim step (we keep it for hidden dynamics, but probe at decision)
+                        x_stim = self._make_step_input(id_feats, self.state_encoder.stim(info))
+                        _, _, hidden = self.policy_network(x_stim, hidden)
+                        h_stim = hidden[0][-1].squeeze(0).detach().cpu().numpy()
+
+                        # decision step (greedy + activation capture)
+                        x_dec = self._make_step_input(id_feats, self.state_encoder.decision(info))
+                        logits, values, hidden, acts = self.policy_network(x_dec, hidden, return_activations=True)
+
+                        dec_logits = logits[:, -1, :]  # (1,2)
+                        v_dec = values[:, -1, 0].detach().cpu().item()
+
+                        # greedy action
+                        chosen_side = int(dec_logits.argmax(dim=-1).item())
+                        chosen = left_bandit if chosen_side == 0 else right_bandit
+                        chosen_id = chosen.stim_id
+
+                        # beta-based q/unc (analysis only)
+                        QL, QR = beta_map[left_id].mean, beta_map[right_id].mean
+                        UL, UR = beta_map[left_id].var, beta_map[right_id].var
+                        dQ = float(QL - QR)
+                        dUnc = float(UL - UR)
+
+                        logit_left = float(dec_logits[0, 0].detach().cpu().item())
+                        logit_right = float(dec_logits[0, 1].detach().cpu().item())
+                        logit_diff = float((dec_logits[0, 0] - dec_logits[0, 1]).detach().cpu().item())
+
+                        # feedback step
+                        r = chosen.sample_reward()
+                        episode_reward += r
+                        beta_map[chosen_id].update(r)
+
+                        id_feats_fb = self._embed_feedback(chosen_id)
+                        x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info))
+                        _, _, hidden = self.policy_network(x_fb, hidden)
+                        h_fb = hidden[0][-1].squeeze(0).detach().cpu().numpy()
+
+                        # requested captures at decision
+                        lstm_out_dec = acts["lstm_out"][:, -1, :]
+                        ph_pre_dec = acts["ph_pre"][:, -1, :]
+                        ph_post_dec = acts["ph_post"][:, -1, :]
+                        vh_pre_dec = acts["vh_pre"][:, -1, :]
+                        vh_post_dec = acts["vh_post"][:, -1, :]
+
+                        self.training_stats["greedy_probe_rows"].append(
+                            {
+                                "mode": "eval_greedy",
+                                "greedy_episode_idx": ep_i,
+                                "block": block,
+                                "trial": trial,
+                                "left_id": int(left_id),
+                                "right_id": int(right_id),
+                                "choice_side": int(chosen_side),
+                                "chosen_id": int(chosen_id),
+                                "reward": float(r),
+                                "QL": float(QL),
+                                "QR": float(QR),
+                                "UncL": float(UL),
+                                "UncR": float(UR),
+                                "dQ": dQ,
+                                "dUnc": dUnc,
+                                "novL": float(novL),
+                                "novR": float(novR),
+                                "dNov": dNov,
+                                "seenL_before": int(kL - 1),
+                                "seenR_before": int(kR - 1),
+                                "logit_left": logit_left,
+                                "logit_right": logit_right,
+                                "logit_diff": logit_diff,
+                                "value_dec": float(v_dec),
+                                "h_stim": h_stim.tolist(),
+                                "h_fb": h_fb.tolist(),
+                                # key point: this is the actual head input
+                                "lstm_out_dec": self._tensor_to_list(lstm_out_dec),
+                                "ph_pre_dec": self._tensor_to_list(ph_pre_dec),
+                                "ph_post_dec": self._tensor_to_list(ph_post_dec),
+                                "vh_pre_dec": self._tensor_to_list(vh_pre_dec),
+                                "vh_post_dec": self._tensor_to_list(vh_post_dec),
+                            }
+                        )
+
+        return self.training_stats["greedy_probe_rows"]
+
+    def build_probe_dataframe_from_rows(self, rows):
+        if rows is None or len(rows) == 0:
             return pd.DataFrame()
 
-        df = pd.DataFrame(self.training_stats["probe_rows"])
+        df = pd.DataFrame(rows)
 
-        # flatten hidden vectors into columns for easy regression
-        for col in ["h_stim", "h_dec", "h_fb"]:
-            if col in df.columns:
-                H = np.stack(df[col].to_numpy())
-                H_cols = {f"{col}_{i}": H[:, i] for i in range(H.shape[1])}
-                df = pd.concat([df.drop(columns=[col]), pd.DataFrame(H_cols)], axis=1)
+        # flatten list-vectors into columns for easy decoding/regression
+        vec_cols = [
+            "h_stim",
+            "h_dec",
+            "h_fb",
+            "lstm_out_dec",
+            "ph_pre_dec",
+            "ph_post_dec",
+            "vh_pre_dec",
+            "vh_post_dec",
+        ]
+        for col in vec_cols:
+            if col in df.columns and df[col].notnull().all():
+                try:
+                    H = np.stack(df[col].to_numpy())
+                    H_cols = {f"{col}_{i}": H[:, i] for i in range(H.shape[1])}
+                    df = pd.concat([df.drop(columns=[col]), pd.DataFrame(H_cols)], axis=1)
+                except Exception:
+                    # if a column is missing for some rows, leave it as-is
+                    pass
 
         return df
+
+    def build_probe_dataframe(self):
+        # training probes only
+        return self.build_probe_dataframe_from_rows(self.training_stats.get("probe_rows", []))
+
+    def build_greedy_probe_dataframe(self):
+        return self.build_probe_dataframe_from_rows(self.training_stats.get("greedy_probe_rows", []))
 
     def plot_training_progress(self):
         fig, axes = plt.subplots(2, 2, figsize=(12, 8))
@@ -565,7 +762,7 @@ def main():
 
     print(f"training for {num_episodes} episodes...")
     for ep in range(num_episodes):
-        reward, _ = agent.train_episode(task, render=(ep % 20 == 0))
+        reward, _ = agent.train_episode(task, render=(ep % 20 == 0), capture_probes=True)
 
         if ep % eval_interval == 0:
             eval_mean, eval_std = agent.evaluate(task, num_episodes=5)
@@ -578,9 +775,16 @@ def main():
     mean_r, std_r = agent.evaluate(task, num_episodes=20)
     print(f"final performance: {mean_r:.2f} ± {std_r:.2f}")
 
+    # training probes csv (sampled actions during training)
     probe_df = agent.build_probe_dataframe()
-    print(f"probe df shape: {probe_df.shape}")
+    print(f"train probe df shape: {probe_df.shape}")
     probe_df.to_csv("probe_rows.csv", index=False)
+
+    # greedy probes csv (deterministic argmax, fixed weights)
+    agent.run_greedy_probes(task, num_episodes=1, clear_existing=True)
+    greedy_df = agent.build_greedy_probe_dataframe()
+    print(f"greedy probe df shape: {greedy_df.shape}")
+    greedy_df.to_csv("probe_rows_greedy.csv", index=False)
 
     agent.plot_training_progress()
     return agent
