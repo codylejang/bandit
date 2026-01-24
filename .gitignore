@@ -20,8 +20,11 @@ Thumbs.db
 # Project specific
 luis_code/__pycache__
 luis_code/.venv
-/data/aquinoshareddata
+/data/
 probe_rows.csv
 probe_rows_greedy.csv
 
 .DS_Store
+AGENTS.md
+*.asv
+/scratchpad
