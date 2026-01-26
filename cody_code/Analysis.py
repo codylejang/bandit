@@ -12,6 +12,7 @@ import statsmodels.api as sm
 
 # CODE CONFIGS
 PROBEROWS_CSV_PATH = "data/probe_rows_greedy_01.csv" # version 1 "cody_code/probe_rows_00.csv"
+PROBEROWS_CSV_PATH = "data/probe_rows_01.csv" # version 1 "cody_code/probe_rows_00.csv"
 
 RUN_CHOICE_ANALYSIS = False
 RUN_FEATURE_IMPACT_ANALYSIS = False

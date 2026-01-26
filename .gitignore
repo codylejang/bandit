@@ -28,3 +28,4 @@ probe_rows_greedy.csv
 AGENTS.md
 *.asv
 /scratchpad
+df_metrics_all.csv
