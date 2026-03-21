@@ -10,7 +10,9 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 seed = 408
-
+TRIALS_PER_BLOCK = 60
+NUM_EPISODES = 40
+EVAL_INTERVAL = 5
 
 class Bandit:
     def __init__(self, stim_id: int, true_prob: float):
@@ -34,7 +36,7 @@ class BanditTask:
       - each block re-samples reward probabilities for its 3 identities
     """
 
-    def __init__(self, n_blocks=30, trials_per_block=15, stim_pool_size=200):
+    def __init__(self, n_blocks=30, trials_per_block=TRIALS_PER_BLOCK, stim_pool_size=200):
         self.n_blocks = int(n_blocks)
         self.trials_per_block = int(trials_per_block)
         self.stim_pool_size = int(stim_pool_size)
@@ -747,7 +749,7 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-    task = BanditTask(n_blocks=30, trials_per_block=15, stim_pool_size=200)
+    task = BanditTask(n_blocks=30, trials_per_block=TRIALS_PER_BLOCK, stim_pool_size=200)
 
     agent = RLAgent(
         hidden_size=128,
@@ -757,34 +759,33 @@ def main():
         id_emb_dim=16,
     )
 
-    num_episodes = 100
-    eval_interval = 10
 
-    print(f"training for {num_episodes} episodes...")
-    for ep in range(num_episodes):
+
+    print(f"training for {NUM_EPISODES} episodes...")
+    for ep in range(NUM_EPISODES):
         reward, _ = agent.train_episode(task, render=(ep % 20 == 0), capture_probes=True)
 
-        if ep % eval_interval == 0:
-            eval_mean, eval_std = agent.evaluate(task, num_episodes=5)
-            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f}")
+        if ep % EVAL_INTERVAL == 0:
+            # eval_mean, eval_std = agent.evaluate(task, num_episodes=5)
+            # print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f}")
 
             agent.policy_network.train()
             agent.id_embedding.train()
 
     print("\nfinal evaluation:")
-    mean_r, std_r = agent.evaluate(task, num_episodes=20)
-    print(f"final performance: {mean_r:.2f} ± {std_r:.2f}")
+    # mean_r, std_r = agent.evaluate(task, num_episodes=NUM_EPISODES)
+    # print(f"final performance: {mean_r:.2f} ± {std_r:.2f}")
 
     # training probes csv (sampled actions during training)
-    probe_df = agent.build_probe_dataframe()
-    print(f"train probe df shape: {probe_df.shape}")
-    probe_df.to_csv("probe_rows.csv", index=False)
+    # probe_df = agent.build_probe_dataframe()
+    # print(f"train probe df shape: {probe_df.shape}")
+    # probe_df.to_csv("probe_rows.csv", index=False)
 
     # greedy probes csv (deterministic argmax, fixed weights)
     agent.run_greedy_probes(task, num_episodes=1, clear_existing=True)
     greedy_df = agent.build_greedy_probe_dataframe()
     print(f"greedy probe df shape: {greedy_df.shape}")
-    greedy_df.to_csv("probe_rows_greedy.csv", index=False)
+    greedy_df.to_csv("probe_rows_greedy_02.csv", index=False)
 
     agent.plot_training_progress()
     return agent
