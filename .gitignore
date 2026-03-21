@@ -24,4 +24,5 @@ luis_code/.venv
 probe_rows.csv
 probe_rows_greedy.csv
 
+data.zip
 .DS_Store

@@ -789,6 +789,8 @@ def main():
     agent.plot_training_progress()
     return agent
 
+# greedy always picks left bandit
+
 
 if __name__ == "__main__":
     trained_agent = main()

@@ -1,0 +1,304 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 1095" font-family="'Segoe UI', Arial, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#566573"/>
+    </marker>
+    <marker id="arrRed" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#E74C3C"/>
+    </marker>
+    <marker id="arrGreen" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#27AE60"/>
+    </marker>
+    <filter id="sh" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="1" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="1095" fill="#FAFCFE"/>
+
+  <!-- Title -->
+  <text x="550" y="38" text-anchor="middle" font-size="22" font-weight="bold" fill="#2C3E50">3-Step LSTM Trial Sequence — Detailed Architecture</text>
+  <text x="550" y="60" text-anchor="middle" font-size="12" fill="#7F8C8D">Each trial consists of 3 sequential LSTM steps: Stimulus → Decision → Feedback</text>
+  <text x="550" y="78" text-anchor="middle" font-size="11" fill="#7F8C8D">Hidden state (h, c) is passed between all steps and persists across trials within a block</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- Column headers -->
+  <!-- ════════════════════════════════════════════ -->
+  <!-- Step 1 column -->
+  <rect x="30" y="95" width="310" height="35" rx="6" fill="#D5F5E3" stroke="#27AE60" stroke-width="1.5"/>
+  <text x="185" y="118" text-anchor="middle" font-size="14" font-weight="bold" fill="#2C3E50">Step 1: Stimulus</text>
+
+  <!-- Step 2 column -->
+  <rect x="390" y="95" width="310" height="35" rx="6" fill="#FDEBD0" stroke="#E67E22" stroke-width="1.5"/>
+  <text x="545" y="118" text-anchor="middle" font-size="14" font-weight="bold" fill="#2C3E50">Step 2: Decision</text>
+
+  <!-- Step 3 column -->
+  <rect x="750" y="95" width="310" height="35" rx="6" fill="#D6EAF8" stroke="#2980B9" stroke-width="1.5"/>
+  <text x="905" y="118" text-anchor="middle" font-size="14" font-weight="bold" fill="#2C3E50">Step 3: Feedback</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- STEP 1: STIMULUS -->
+  <!-- ════════════════════════════════════════════ -->
+
+  <!-- Identity inputs -->
+  <rect x="40" y="150" width="120" height="45" rx="6" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="100" y="170" text-anchor="middle" font-size="10" fill="#2C3E50">Left Stim ID</text>
+  <text x="100" y="186" text-anchor="middle" font-size="8" fill="#7F8C8D" font-style="italic">left_id</text>
+
+  <rect x="180" y="150" width="120" height="45" rx="6" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="240" y="170" text-anchor="middle" font-size="10" fill="#2C3E50">Right Stim ID</text>
+  <text x="240" y="186" text-anchor="middle" font-size="8" fill="#7F8C8D" font-style="italic">right_id</text>
+
+  <!-- Arrows down to embeddings -->
+  <line x1="100" y1="195" x2="100" y2="215" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="240" y1="195" x2="240" y2="215" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Embeddings -->
+  <rect x="40" y="215" width="120" height="40" rx="6" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="100" y="237" text-anchor="middle" font-size="9" fill="#2C3E50">Embed(left_id)</text>
+  <text x="100" y="250" text-anchor="middle" font-size="7" fill="#7F8C8D">dim=16</text>
+
+  <rect x="180" y="215" width="120" height="40" rx="6" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="240" y="237" text-anchor="middle" font-size="9" fill="#2C3E50">Embed(right_id)</text>
+  <text x="240" y="250" text-anchor="middle" font-size="7" fill="#7F8C8D">dim=16</text>
+
+  <!-- State encoder -->
+  <rect x="60" y="275" width="220" height="40" rx="6" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="170" y="293" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">StateEncoder.stim(info)</text>
+  <text x="170" y="308" text-anchor="middle" font-size="7" fill="#7F8C8D">[trial_frac, 1, 0, 0, 0]  dim=5</text>
+
+  <!-- Arrows to concat -->
+  <line x1="100" y1="255" x2="130" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="240" y1="255" x2="200" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="170" y1="315" x2="170" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Concat -->
+  <rect x="50" y="335" width="240" height="40" rx="6" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="170" y="353" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">[emb_L ‖ emb_R ‖ state]</text>
+  <text x="170" y="368" text-anchor="middle" font-size="7" fill="#7F8C8D">dim = 37  →  unsqueeze (1,1,37)</text>
+
+  <!-- Arrow to LSTM -->
+  <line x1="170" y1="375" x2="170" y2="410" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- LSTM cell -->
+  <rect x="50" y="410" width="240" height="70" rx="8" fill="#A9CCE3" stroke="#2C3E50" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="170" y="438" text-anchor="middle" font-size="14" font-weight="bold" fill="#2C3E50">LSTM</text>
+  <text x="170" y="458" text-anchor="middle" font-size="8" fill="#2C3E50">2-layer, hidden=128</text>
+  <text x="170" y="472" text-anchor="middle" font-size="7" fill="#7F8C8D">x_stim → (_, _, hidden₁)</text>
+
+  <!-- Output note -->
+  <rect x="55" y="500" width="230" height="35" rx="6" fill="#F8F9FA" stroke="#BDC3C7" stroke-width="1"/>
+  <text x="170" y="515" text-anchor="middle" font-size="8" fill="#566573">Output discarded (no action at stim step)</text>
+  <text x="170" y="528" text-anchor="middle" font-size="8" fill="#566573">Only hidden state updated</text>
+
+  <!-- h_stim probe -->
+  <rect x="70" y="550" width="200" height="28" rx="5" fill="#FCF3CF" stroke="#F39C12" stroke-width="1"/>
+  <text x="170" y="569" text-anchor="middle" font-size="8" fill="#7D6608">PROBE: h_stim = hidden[0][-1]  (128-d)</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- STEP 2: DECISION -->
+  <!-- ════════════════════════════════════════════ -->
+
+  <!-- Identity inputs (same pair) -->
+  <rect x="400" y="150" width="120" height="45" rx="6" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="460" y="170" text-anchor="middle" font-size="10" fill="#2C3E50">Left Stim ID</text>
+  <text x="460" y="186" text-anchor="middle" font-size="8" fill="#7F8C8D" font-style="italic">same left_id</text>
+
+  <rect x="540" y="150" width="120" height="45" rx="6" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="600" y="170" text-anchor="middle" font-size="10" fill="#2C3E50">Right Stim ID</text>
+  <text x="600" y="186" text-anchor="middle" font-size="8" fill="#7F8C8D" font-style="italic">same right_id</text>
+
+  <!-- Arrows down to embeddings -->
+  <line x1="460" y1="195" x2="460" y2="215" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="600" y1="195" x2="600" y2="215" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Embeddings -->
+  <rect x="400" y="215" width="120" height="40" rx="6" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="460" y="237" text-anchor="middle" font-size="9" fill="#2C3E50">Embed(left_id)</text>
+  <text x="460" y="250" text-anchor="middle" font-size="7" fill="#7F8C8D">dim=16</text>
+
+  <rect x="540" y="215" width="120" height="40" rx="6" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="600" y="237" text-anchor="middle" font-size="9" fill="#2C3E50">Embed(right_id)</text>
+  <text x="600" y="250" text-anchor="middle" font-size="7" fill="#7F8C8D">dim=16</text>
+
+  <!-- State encoder -->
+  <rect x="420" y="275" width="220" height="40" rx="6" fill="#FDEBD0" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="530" y="293" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">StateEncoder.decision(info)</text>
+  <text x="530" y="308" text-anchor="middle" font-size="7" fill="#7F8C8D">[trial_frac, 0, 1, 0, 0]  dim=5</text>
+
+  <!-- Arrows to concat -->
+  <line x1="460" y1="255" x2="490" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="600" y1="255" x2="560" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="530" y1="315" x2="530" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Concat -->
+  <rect x="410" y="335" width="240" height="40" rx="6" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="530" y="353" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">[emb_L ‖ emb_R ‖ state]</text>
+  <text x="530" y="368" text-anchor="middle" font-size="7" fill="#7F8C8D">dim = 37  →  unsqueeze (1,1,37)</text>
+
+  <!-- Arrow to LSTM -->
+  <line x1="530" y1="375" x2="530" y2="410" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- Hidden state arrow from step 1 to step 2 -->
+  <path d="M 290 445 L 410 445" fill="none" stroke="#E74C3C" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrRed)"/>
+  <text x="350" y="438" text-anchor="middle" font-size="8" fill="#E74C3C" font-weight="bold">hidden₁ (h, c)</text>
+
+  <!-- LSTM cell -->
+  <rect x="410" y="410" width="240" height="70" rx="8" fill="#A9CCE3" stroke="#2C3E50" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="530" y="438" text-anchor="middle" font-size="14" font-weight="bold" fill="#2C3E50">LSTM</text>
+  <text x="530" y="458" text-anchor="middle" font-size="8" fill="#2C3E50">return_activations=True</text>
+  <text x="530" y="472" text-anchor="middle" font-size="7" fill="#7F8C8D">x_dec → (logits, values, hidden₂, acts)</text>
+
+  <!-- Decision outputs -->
+  <!-- Split point -->
+  <circle cx="530" cy="500" r="4" fill="#566573"/>
+  <line x1="530" y1="480" x2="530" y2="500" stroke="#566573" stroke-width="1.2"/>
+
+  <!-- Logits branch -->
+  <line x1="530" y1="500" x2="450" y2="525" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
+  <rect x="390" y="525" width="120" height="40" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="450" y="543" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">Logits</text>
+  <text x="450" y="558" text-anchor="middle" font-size="7" fill="#7F8C8D">(1, 2) → softmax</text>
+
+  <!-- Value branch -->
+  <line x1="530" y1="500" x2="610" y2="525" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
+  <rect x="550" y="525" width="120" height="40" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="610" y="543" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">Value V(s)</text>
+  <text x="610" y="558" text-anchor="middle" font-size="7" fill="#7F8C8D">scalar</text>
+
+  <!-- Categorical sampling -->
+  <line x1="450" y1="565" x2="450" y2="585" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <rect x="390" y="585" width="120" height="35" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="450" y="600" text-anchor="middle" font-size="8" font-weight="bold" fill="#2C3E50">Categorical</text>
+  <text x="450" y="613" text-anchor="middle" font-size="7" fill="#7F8C8D">sample / argmax</text>
+
+  <!-- Action output -->
+  <line x1="450" y1="620" x2="450" y2="640" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <rect x="400" y="640" width="100" height="35" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="2" filter="url(#sh)"/>
+  <text x="450" y="658" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">Action</text>
+  <text x="450" y="670" text-anchor="middle" font-size="7" fill="#7F8C8D">0=L, 1=R</text>
+
+  <!-- Probe captures at decision -->
+  <rect x="395" y="695" width="270" height="90" rx="6" fill="#FCF3CF" stroke="#F39C12" stroke-width="1.2"/>
+  <text x="530" y="712" text-anchor="middle" font-size="9" font-weight="bold" fill="#7D6608">PROBES (at decision step)</text>
+  <text x="405" y="730" font-size="8" fill="#7D6608">• lstm_out_dec = acts["lstm_out"][:,-1,:]  (128-d)</text>
+  <text x="405" y="745" font-size="8" fill="#7D6608">• ph_pre_dec = acts["ph_pre"][:,-1,:]  (64-d)</text>
+  <text x="405" y="760" font-size="8" fill="#7D6608">• ph_post_dec = acts["ph_post"][:,-1,:]  (64-d)</text>
+  <text x="405" y="775" font-size="8" fill="#7D6608">• vh_pre_dec / vh_post_dec  (64-d each)</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- STEP 3: FEEDBACK -->
+  <!-- ════════════════════════════════════════════ -->
+
+  <!-- Chosen ID only -->
+  <rect x="800" y="150" width="130" height="45" rx="6" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="865" y="170" text-anchor="middle" font-size="10" fill="#2C3E50">Chosen Stim ID</text>
+  <text x="865" y="186" text-anchor="middle" font-size="8" fill="#7F8C8D" font-style="italic">chosen_id</text>
+
+  <!-- Arrow to embedding -->
+  <line x1="865" y1="195" x2="865" y2="215" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Embedding (chosen only) -->
+  <rect x="770" y="215" width="120" height="40" rx="6" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="830" y="237" text-anchor="middle" font-size="9" fill="#2C3E50">Embed(chosen)</text>
+  <text x="830" y="250" text-anchor="middle" font-size="7" fill="#7F8C8D">dim=16</text>
+
+  <!-- Zero vector for right slot -->
+  <rect x="910" y="215" width="120" height="40" rx="6" fill="#EAECEE" stroke="#BDC3C7" stroke-width="1" filter="url(#sh)"/>
+  <text x="970" y="237" text-anchor="middle" font-size="9" fill="#7F8C8D">zeros</text>
+  <text x="970" y="250" text-anchor="middle" font-size="7" fill="#BDC3C7">dim=16</text>
+
+  <!-- State encoder -->
+  <rect x="780" y="275" width="220" height="40" rx="6" fill="#D6EAF8" stroke="#2C3E50" stroke-width="1" filter="url(#sh)"/>
+  <text x="890" y="293" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">StateEncoder.feedback(r, info)</text>
+  <text x="890" y="308" text-anchor="middle" font-size="7" fill="#7F8C8D">[trial_frac, 0, 0, 1, reward]  dim=5</text>
+
+  <!-- Reward input annotation -->
+  <rect x="1010" y="278" width="70" height="30" rx="5" fill="#F5B7B1" stroke="#E74C3C" stroke-width="1"/>
+  <text x="1045" y="295" text-anchor="middle" font-size="8" font-weight="bold" fill="#C0392B">reward</text>
+  <text x="1045" y="305" text-anchor="middle" font-size="7" fill="#E74C3C">0.0 or 1.0</text>
+
+  <!-- Arrows to concat -->
+  <line x1="830" y1="255" x2="860" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="970" y1="255" x2="920" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="890" y1="315" x2="890" y2="335" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Concat -->
+  <rect x="770" y="335" width="240" height="40" rx="6" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="890" y="353" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">[emb_chosen ‖ zeros ‖ state]</text>
+  <text x="890" y="368" text-anchor="middle" font-size="7" fill="#7F8C8D">dim = 37  →  unsqueeze (1,1,37)</text>
+
+  <!-- Arrow to LSTM -->
+  <line x1="890" y1="375" x2="890" y2="410" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- Hidden state arrow from step 2 to step 3 -->
+  <path d="M 650 445 L 770 445" fill="none" stroke="#E74C3C" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrRed)"/>
+  <text x="710" y="438" text-anchor="middle" font-size="8" fill="#E74C3C" font-weight="bold">hidden₂ (h, c)</text>
+
+  <!-- LSTM cell -->
+  <rect x="770" y="410" width="240" height="70" rx="8" fill="#A9CCE3" stroke="#2C3E50" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="890" y="438" text-anchor="middle" font-size="14" font-weight="bold" fill="#2C3E50">LSTM</text>
+  <text x="890" y="458" text-anchor="middle" font-size="8" fill="#2C3E50">2-layer, hidden=128</text>
+  <text x="890" y="472" text-anchor="middle" font-size="7" fill="#7F8C8D">x_fb → (_, _, hidden₃)</text>
+
+  <!-- Output note -->
+  <rect x="775" y="500" width="230" height="35" rx="6" fill="#F8F9FA" stroke="#BDC3C7" stroke-width="1"/>
+  <text x="890" y="515" text-anchor="middle" font-size="8" fill="#566573">Output discarded (no action at fb step)</text>
+  <text x="890" y="528" text-anchor="middle" font-size="8" fill="#566573">Only hidden state updated with reward info</text>
+
+  <!-- h_fb probe -->
+  <rect x="790" y="550" width="200" height="28" rx="5" fill="#FCF3CF" stroke="#F39C12" stroke-width="1"/>
+  <text x="890" y="569" text-anchor="middle" font-size="8" fill="#7D6608">PROBE: h_fb = hidden[0][-1]  (128-d)</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- Hidden state to next trial -->
+  <!-- ════════════════════════════════════════════ -->
+  <path d="M 890 595 L 890 805 Q 890 820 870 820 L 200 820 Q 170 820 170 805 L 170 595" fill="none" stroke="#E74C3C" stroke-width="2" stroke-dasharray="8,4" marker-end="url(#arrRed)"/>
+  <text x="530" y="838" text-anchor="middle" font-size="10" fill="#E74C3C" font-weight="bold">hidden₃ → next trial's hidden (persists within block)</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- Block boundary note -->
+  <!-- ════════════════════════════════════════════ -->
+  <rect x="150" y="860" width="760" height="55" rx="8" fill="#FDEDEC" stroke="#E74C3C" stroke-width="1.2"/>
+  <text x="530" y="880" text-anchor="middle" font-size="11" font-weight="bold" fill="#C0392B">Block Boundary</text>
+  <text x="530" y="898" text-anchor="middle" font-size="9" fill="#E74C3C">At the start of each new block: hidden = None (reset). New reward probabilities sampled.</text>
+  <text x="530" y="912" text-anchor="middle" font-size="9" fill="#E74C3C">2 of 3 identities kept, 1 dropped, 1 new identity introduced.</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- Key differences table -->
+  <!-- ════════════════════════════════════════════ -->
+  <!-- Step Comparison: 3 compact cards -->
+  <text x="380" y="950" text-anchor="middle" font-size="13" font-weight="bold" fill="#2C3E50">Step Comparison</text>
+
+  <!-- Card 1: Stimulus -->
+  <rect x="50" y="962" width="210" height="110" rx="8" fill="#D5F5E3" stroke="#27AE60" stroke-width="1.2"/>
+  <text x="155" y="982" text-anchor="middle" font-size="11" font-weight="bold" fill="#27AE60">Stimulus</text>
+  <line x1="60" y1="988" x2="250" y2="988" stroke="#27AE60" stroke-width="0.6"/>
+  <text x="65" y="1004" font-size="8" fill="#566573">IDs:  [emb_L ‖ emb_R]</text>
+  <text x="65" y="1018" font-size="8" fill="#566573">Flags:  [1, 0, 0]</text>
+  <text x="65" y="1032" font-size="8" fill="#566573">Reward:  0.0</text>
+  <text x="65" y="1046" font-size="8" fill="#566573">Output:  hidden only</text>
+  <text x="65" y="1060" font-size="8" fill="#566573">Action:  No</text>
+
+  <!-- Card 2: Decision -->
+  <rect x="280" y="962" width="210" height="110" rx="8" fill="#FDEBD0" stroke="#E67E22" stroke-width="1.2"/>
+  <text x="385" y="982" text-anchor="middle" font-size="11" font-weight="bold" fill="#E67E22">Decision</text>
+  <line x1="290" y1="988" x2="480" y2="988" stroke="#E67E22" stroke-width="0.6"/>
+  <text x="295" y="1004" font-size="8" fill="#566573">IDs:  [emb_L ‖ emb_R]</text>
+  <text x="295" y="1018" font-size="8" fill="#566573">Flags:  [0, 1, 0]</text>
+  <text x="295" y="1032" font-size="8" fill="#566573">Reward:  0.0</text>
+  <text x="295" y="1046" font-size="8" fill="#566573">Output:  logits + value + hidden</text>
+  <text x="295" y="1060" font-size="8" font-weight="bold" fill="#E67E22">Action:  Yes (L or R)</text>
+
+  <!-- Card 3: Feedback -->
+  <rect x="510" y="962" width="210" height="110" rx="8" fill="#D6EAF8" stroke="#2980B9" stroke-width="1.2"/>
+  <text x="615" y="982" text-anchor="middle" font-size="11" font-weight="bold" fill="#2980B9">Feedback</text>
+  <line x1="520" y1="988" x2="710" y2="988" stroke="#2980B9" stroke-width="0.6"/>
+  <text x="525" y="1004" font-size="8" fill="#566573">IDs:  [emb_chosen ‖ zeros]</text>
+  <text x="525" y="1018" font-size="8" fill="#566573">Flags:  [0, 0, 1]</text>
+  <text x="525" y="1032" font-size="8" fill="#566573">Reward:  r ∈ {0.0, 1.0}</text>
+  <text x="525" y="1046" font-size="8" fill="#566573">Output:  hidden only</text>
+  <text x="525" y="1060" font-size="8" fill="#566573">Action:  No</text>
+
+</svg>

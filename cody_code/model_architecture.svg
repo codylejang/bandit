@@ -1,0 +1,271 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1200" font-family="'Segoe UI', Arial, sans-serif">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#566573"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#E74C3C"/>
+    </marker>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="1" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="1200" fill="#FAFCFE"/>
+
+  <!-- Title -->
+  <text x="450" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#2C3E50">RL_persist.py — Model Architecture</text>
+  <text x="450" y="62" text-anchor="middle" font-size="13" fill="#7F8C8D">LSTM Actor-Critic for Identity-Based 3-Armed Bandit</text>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- SECTION: Inputs -->
+  <!-- ══════════════════════════════════ -->
+  <text x="30" y="100" font-size="14" font-weight="bold" fill="#2C3E50">Inputs (per step)</text>
+
+  <!-- Left Stim ID -->
+  <rect x="30" y="110" width="180" height="55" rx="8" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="120" y="135" text-anchor="middle" font-size="11" fill="#2C3E50">Left Stim ID</text>
+  <text x="120" y="155" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">int ∈ [0, 199]</text>
+
+  <!-- Right Stim ID -->
+  <rect x="230" y="110" width="180" height="55" rx="8" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="320" y="135" text-anchor="middle" font-size="11" fill="#2C3E50">Right Stim ID</text>
+  <text x="320" y="155" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">int ∈ [0, 199]</text>
+
+  <!-- StateEncoder -->
+  <rect x="440" y="110" width="310" height="55" rx="8" fill="#E8F4FD" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="595" y="133" text-anchor="middle" font-size="11" font-weight="bold" fill="#2C3E50">StateEncoder</text>
+  <text x="595" y="153" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">trial_frac | stim/dec/fb flags | reward  (dim=5)</text>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- SECTION: Embedding -->
+  <!-- ══════════════════════════════════ -->
+  <text x="30" y="195" font-size="14" font-weight="bold" fill="#2C3E50">Embedding</text>
+
+  <!-- Embedding(L) -->
+  <rect x="30" y="205" width="180" height="55" rx="8" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="120" y="228" text-anchor="middle" font-size="11" fill="#2C3E50">nn.Embedding</text>
+  <text x="120" y="248" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">200 × 16  →  dim=16</text>
+
+  <!-- Embedding(R) -->
+  <rect x="230" y="205" width="180" height="55" rx="8" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="320" y="228" text-anchor="middle" font-size="11" fill="#2C3E50">nn.Embedding</text>
+  <text x="320" y="248" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">200 × 16  →  dim=16</text>
+
+  <!-- Shared weights label -->
+  <text x="220" y="237" text-anchor="middle" font-size="9" fill="#E74C3C" font-weight="bold">shared</text>
+
+  <!-- Arrows: IDs → Embeddings -->
+  <line x1="120" y1="165" x2="120" y2="205" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="320" y1="165" x2="320" y2="205" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- SECTION: Concatenation -->
+  <!-- ══════════════════════════════════ -->
+  <rect x="60" y="295" width="650" height="50" rx="8" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="385" y="318" text-anchor="middle" font-size="12" font-weight="bold" fill="#2C3E50">Concatenate: [ emb_L ‖ emb_R ‖ state_vec ]</text>
+  <text x="385" y="337" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">dim = 16 + 16 + 5 = 37</text>
+
+  <!-- Arrows: embs + state → concat -->
+  <line x1="120" y1="260" x2="250" y2="295" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="320" y1="260" x2="330" y2="295" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="595" y1="165" x2="520" y2="295" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- SECTION: LSTM Backbone -->
+  <!-- ══════════════════════════════════ -->
+  <text x="30" y="380" font-size="14" font-weight="bold" fill="#2C3E50">Recurrent Backbone</text>
+
+  <rect x="60" y="390" width="580" height="90" rx="10" fill="#A9CCE3" stroke="#2C3E50" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="350" y="425" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3E50">LSTM</text>
+  <text x="350" y="450" text-anchor="middle" font-size="10" fill="#2C3E50">input_size=37 | hidden_size=128 | num_layers=2 | batch_first=True</text>
+  <text x="350" y="470" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">output: lstm_out (B, S, 128)</text>
+
+  <!-- Arrow: concat → LSTM -->
+  <line x1="385" y1="345" x2="350" y2="390" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Hidden state recurrence arrow -->
+  <path d="M 640 420 Q 680 435 640 455" fill="none" stroke="#E74C3C" stroke-width="1.5" marker-end="url(#arrowRed)"/>
+  <text x="700" y="440" font-size="9" fill="#E74C3C" font-weight="bold">hidden (h, c)</text>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- Split point -->
+  <!-- ══════════════════════════════════ -->
+  <circle cx="350" cy="510" r="5" fill="#566573"/>
+  <line x1="350" y1="480" x2="350" y2="510" stroke="#566573" stroke-width="1.2"/>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- SECTION: Policy Head (left) -->
+  <!-- ══════════════════════════════════ -->
+  <text x="80" y="550" font-size="14" font-weight="bold" fill="#2C3E50">Policy Head</text>
+
+  <!-- Arrow split to policy head -->
+  <line x1="350" y1="510" x2="180" y2="560" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- ph_fc1 -->
+  <rect x="50" y="560" width="260" height="45" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="580" text-anchor="middle" font-size="11" fill="#2C3E50">Linear (ph_fc1)</text>
+  <text x="180" y="596" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">128 → 64</text>
+
+  <!-- Arrow -->
+  <line x1="180" y1="605" x2="180" y2="625" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <text x="280" y="618" font-size="8" fill="#7F8C8D">ph_pre</text>
+
+  <!-- ph_relu -->
+  <rect x="50" y="625" width="260" height="40" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="650" text-anchor="middle" font-size="11" fill="#2C3E50">ReLU (ph_relu)</text>
+
+  <!-- Arrow -->
+  <line x1="180" y1="665" x2="180" y2="685" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <text x="280" y="678" font-size="8" fill="#7F8C8D">ph_post</text>
+
+  <!-- ph_drop -->
+  <rect x="50" y="685" width="260" height="40" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="707" text-anchor="middle" font-size="11" fill="#2C3E50">Dropout (ph_drop, p=0.0)</text>
+
+  <!-- Arrow -->
+  <line x1="180" y1="725" x2="180" y2="745" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- ph_fc2 -->
+  <rect x="50" y="745" width="260" height="45" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="765" text-anchor="middle" font-size="11" fill="#2C3E50">Linear (ph_fc2)</text>
+  <text x="180" y="781" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">64 → 2</text>
+
+  <!-- Arrow -->
+  <line x1="180" y1="790" x2="180" y2="815" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Logits -->
+  <rect x="50" y="815" width="260" height="45" rx="8" fill="#ABEBC6" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="835" text-anchor="middle" font-size="12" font-weight="bold" fill="#2C3E50">Logits</text>
+  <text x="180" y="852" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">(B, S, 2)</text>
+
+  <!-- Arrow -->
+  <line x1="180" y1="860" x2="180" y2="885" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Categorical -->
+  <rect x="30" y="885" width="300" height="55" rx="8" fill="#ABEBC6" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="908" text-anchor="middle" font-size="11" font-weight="bold" fill="#2C3E50">Categorical(softmax(logits))</text>
+  <text x="180" y="928" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">sample (train) / argmax (eval)</text>
+
+  <!-- Arrow -->
+  <line x1="180" y1="940" x2="180" y2="965" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Action -->
+  <rect x="80" y="965" width="200" height="45" rx="8" fill="#ABEBC6" stroke="#27AE60" stroke-width="2" filter="url(#shadow)"/>
+  <text x="180" y="985" text-anchor="middle" font-size="12" font-weight="bold" fill="#2C3E50">Action</text>
+  <text x="180" y="1002" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">0 = Left, 1 = Right</text>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- SECTION: Value Head (right) -->
+  <!-- ══════════════════════════════════ -->
+  <text x="530" y="550" font-size="14" font-weight="bold" fill="#2C3E50">Value Head</text>
+
+  <!-- Arrow split to value head -->
+  <line x1="350" y1="510" x2="560" y2="560" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- vh_fc1 -->
+  <rect x="430" y="560" width="260" height="45" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="560" y="580" text-anchor="middle" font-size="11" fill="#2C3E50">Linear (vh_fc1)</text>
+  <text x="560" y="596" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">128 → 64</text>
+
+  <!-- Arrow -->
+  <line x1="560" y1="605" x2="560" y2="625" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <text x="660" y="618" font-size="8" fill="#7F8C8D">vh_pre</text>
+
+  <!-- vh_relu -->
+  <rect x="430" y="625" width="260" height="40" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="560" y="650" text-anchor="middle" font-size="11" fill="#2C3E50">ReLU (vh_relu)</text>
+
+  <!-- Arrow -->
+  <line x1="560" y1="665" x2="560" y2="685" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <text x="660" y="678" font-size="8" fill="#7F8C8D">vh_post</text>
+
+  <!-- vh_drop -->
+  <rect x="430" y="685" width="260" height="40" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="560" y="707" text-anchor="middle" font-size="11" fill="#2C3E50">Dropout (vh_drop, p=0.0)</text>
+
+  <!-- Arrow -->
+  <line x1="560" y1="725" x2="560" y2="745" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- vh_fc2 -->
+  <rect x="430" y="745" width="260" height="45" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="560" y="765" text-anchor="middle" font-size="11" fill="#2C3E50">Linear (vh_fc2)</text>
+  <text x="560" y="781" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">64 → 1</text>
+
+  <!-- Arrow -->
+  <line x1="560" y1="790" x2="560" y2="815" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Value output -->
+  <rect x="430" y="815" width="260" height="45" rx="8" fill="#ABEBC6" stroke="#27AE60" stroke-width="2" filter="url(#shadow)"/>
+  <text x="560" y="835" text-anchor="middle" font-size="12" font-weight="bold" fill="#2C3E50">Value V(s)</text>
+  <text x="560" y="852" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">(B, S, 1)</text>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- SECTION: Loss -->
+  <!-- ══════════════════════════════════ -->
+  <text x="30" y="1060" font-size="14" font-weight="bold" fill="#2C3E50">Training Loss</text>
+
+  <rect x="30" y="1070" width="720" height="55" rx="8" fill="#F5B7B1" stroke="#E74C3C" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="390" y="1092" text-anchor="middle" font-size="13" font-weight="bold" fill="#2C3E50">L = policy_loss + 0.5 × value_loss − 0.002 × entropy</text>
+  <text x="390" y="1115" text-anchor="middle" font-size="9" fill="#7F8C8D">policy: −(log π · advantage)  |  value: MSE(V, returns)  |  advantage = returns − V.detach()  |  grad_clip=1.0</text>
+
+  <!-- Arrows to loss -->
+  <line x1="180" y1="1010" x2="250" y2="1070" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="560" y1="860" x2="530" y2="1070" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- SECTION: Trial Sequence (right sidebar) -->
+  <!-- ══════════════════════════════════ -->
+  <text x="770" y="100" text-anchor="middle" font-size="13" font-weight="bold" fill="#2C3E50">Trial Sequence</text>
+
+  <!-- Step 1: Stimulus -->
+  <rect x="710" y="110" width="130" height="60" rx="8" fill="#D5F5E3" stroke="#2C3E50" stroke-width="1.2"/>
+  <text x="775" y="133" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">1. Stimulus</text>
+  <text x="775" y="150" text-anchor="middle" font-size="8" fill="#566573">pair (L,R) shown</text>
+  <text x="775" y="163" text-anchor="middle" font-size="8" fill="#566573">[emb_L ‖ emb_R]</text>
+
+  <!-- Arrow -->
+  <line x1="775" y1="170" x2="775" y2="190" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Step 2: Decision -->
+  <rect x="710" y="190" width="130" height="60" rx="8" fill="#FDEBD0" stroke="#2C3E50" stroke-width="1.2"/>
+  <text x="775" y="213" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">2. Decision</text>
+  <text x="775" y="230" text-anchor="middle" font-size="8" fill="#566573">same pair offered</text>
+  <text x="775" y="243" text-anchor="middle" font-size="8" fill="#566573">→ action selected</text>
+
+  <!-- Arrow -->
+  <line x1="775" y1="250" x2="775" y2="270" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Step 3: Feedback -->
+  <rect x="710" y="270" width="130" height="60" rx="8" fill="#D6EAF8" stroke="#2C3E50" stroke-width="1.2"/>
+  <text x="775" y="293" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">3. Feedback</text>
+  <text x="775" y="310" text-anchor="middle" font-size="8" fill="#566573">chosen_id only</text>
+  <text x="775" y="323" text-anchor="middle" font-size="8" fill="#566573">+ reward scalar</text>
+
+  <!-- Hidden state note -->
+  <rect x="710" y="355" width="160" height="70" rx="8" fill="#FDEDEC" stroke="#E74C3C" stroke-width="1"/>
+  <text x="790" y="375" text-anchor="middle" font-size="8" fill="#E74C3C" font-weight="bold">Hidden state persists</text>
+  <text x="790" y="390" text-anchor="middle" font-size="8" fill="#E74C3C">across all 3 steps</text>
+  <text x="790" y="405" text-anchor="middle" font-size="8" fill="#E74C3C">and across trials</text>
+  <text x="790" y="418" text-anchor="middle" font-size="8" fill="#E74C3C">within a block</text>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- Probe points legend -->
+  <!-- ══════════════════════════════════ -->
+  <rect x="710" y="460" width="170" height="130" rx="8" fill="#F8F9FA" stroke="#BDC3C7" stroke-width="1"/>
+  <text x="795" y="480" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">Probe Points</text>
+  <text x="795" y="498" text-anchor="middle" font-size="8" fill="#566573">(captured at decision step)</text>
+  <text x="720" y="518" font-size="8" fill="#566573">• lstm_out  (128-d)</text>
+  <text x="720" y="534" font-size="8" fill="#566573">• ph_pre / ph_post  (64-d)</text>
+  <text x="720" y="550" font-size="8" fill="#566573">• vh_pre / vh_post  (64-d)</text>
+  <text x="720" y="566" font-size="8" fill="#566573">• logits / value outputs</text>
+  <text x="720" y="582" font-size="8" fill="#566573">• h_stim / h_dec / h_fb</text>
+
+  <!-- ══════════════════════════════════ -->
+  <!-- Optimizer info -->
+  <!-- ══════════════════════════════════ -->
+  <rect x="30" y="1145" width="720" height="35" rx="6" fill="#F8F9FA" stroke="#BDC3C7" stroke-width="1"/>
+  <text x="390" y="1168" text-anchor="middle" font-size="10" fill="#566573">Optimizer: Adam (lr=3e-4) over LSTM params + Embedding params  |  Update: once per block (contextual bandit returns)</text>
+
+</svg>
