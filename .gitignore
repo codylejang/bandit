@@ -29,3 +29,5 @@ AGENTS.md
 *.asv
 /scratchpad
 df_metrics_all.csv
+
+data.zip
