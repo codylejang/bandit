@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 seed = 408
 TRIALS_PER_BLOCK = 60
-NUM_EPISODES = 40
+NUM_EPISODES = 500
 EVAL_INTERVAL = 5
 
 class Bandit:
@@ -238,7 +238,7 @@ class RLAgent:
         hidden_size=128,
         lr=3e-4,
         gamma=0.99,
-        entropy_coef=0.002,
+        entropy_coef=0.01,
         value_coef=0.5,
         norm_trials=15,
         num_stimuli=200,
@@ -297,7 +297,8 @@ class RLAgent:
         - identity features encode the same offered pair (left_id, right_id)
         - base state marks "decision" and reward=0
     - feedback step:
-        - identity features encode the chosen identity only (chosen_id embedded in the left slot, right slot zeroed)
+        - identity features encode the chosen identity in its actual position
+          (chosen_side=0 → left slot, chosen_side=1 → right slot; other slot zeroed)
         - base state marks "feedback" and reward is the observed outcome
 
     probe additions:
@@ -313,12 +314,16 @@ class RLAgent:
         e_right = self.id_embedding(right_t)  # (1, emb)
         return torch.cat([e_left, e_right], dim=-1)  # (1, 2*emb)
 
-    def _embed_feedback(self, chosen_id: int) -> torch.Tensor:
-        # feedback only tells the rnn which identity produced the reward
+    def _embed_feedback(self, chosen_id: int, chosen_side: int) -> torch.Tensor:
+        # feedback tells the rnn which identity produced the reward,
+        # placed in its actual position to avoid left-slot bias
         chosen_t = torch.tensor([chosen_id], device=self.device, dtype=torch.long)
         e_chosen = self.id_embedding(chosen_t)      # (1, emb)
         e_zero = torch.zeros_like(e_chosen)         # (1, emb)
-        return torch.cat([e_chosen, e_zero], dim=-1)  # (1, 2*emb)
+        if chosen_side == 0:  # chose left
+            return torch.cat([e_chosen, e_zero], dim=-1)
+        else:  # chose right
+            return torch.cat([e_zero, e_chosen], dim=-1)
 
     def _make_step_input(self, id_feats: torch.Tensor, base_state: torch.Tensor) -> torch.Tensor:
         # id_feats: (1, 2*emb), base_state: (base_dim,)
@@ -410,7 +415,7 @@ class RLAgent:
                 episode_reward += r
                 beta_map[chosen_id].update(r)
 
-                id_feats_fb = self._embed_feedback(chosen_id)
+                id_feats_fb = self._embed_feedback(chosen_id, chosen_side)
                 x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info))
                 _, _, hidden = self.policy_network(x_fb, hidden)
                 h_fb = hidden[0][-1].squeeze(0).detach().cpu().numpy()
@@ -532,15 +537,15 @@ class RLAgent:
                         logits, _, hidden = self.policy_network(x_dec, hidden)
                         dec_logits = logits[:, -1, :]  # (1,2)
 
-                        action = int(dec_logits.argmax(dim=-1).item())
-                        chosen = left_bandit if action == 0 else right_bandit
+                        chosen_side = int(dec_logits.argmax(dim=-1).item())
+                        chosen = left_bandit if chosen_side == 0 else right_bandit
                         chosen_id = chosen.stim_id
 
                         r = chosen.sample_reward()
                         episode_reward += r
 
                         # feedback step
-                        id_feats_fb = self._embed_feedback(chosen_id)
+                        id_feats_fb = self._embed_feedback(chosen_id, chosen_side)
                         x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info))
                         _, _, hidden = self.policy_network(x_fb, hidden)
 
@@ -622,7 +627,7 @@ class RLAgent:
                         episode_reward += r
                         beta_map[chosen_id].update(r)
 
-                        id_feats_fb = self._embed_feedback(chosen_id)
+                        id_feats_fb = self._embed_feedback(chosen_id, chosen_side)
                         x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info))
                         _, _, hidden = self.policy_network(x_fb, hidden)
                         h_fb = hidden[0][-1].squeeze(0).detach().cpu().numpy()
@@ -766,15 +771,15 @@ def main():
         reward, _ = agent.train_episode(task, render=(ep % 20 == 0), capture_probes=True)
 
         if ep % EVAL_INTERVAL == 0:
-            # eval_mean, eval_std = agent.evaluate(task, num_episodes=5)
-            # print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f}")
+            eval_mean, eval_std = agent.evaluate(task, num_episodes=5)
+            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f}")
 
             agent.policy_network.train()
             agent.id_embedding.train()
 
     print("\nfinal evaluation:")
-    # mean_r, std_r = agent.evaluate(task, num_episodes=NUM_EPISODES)
-    # print(f"final performance: {mean_r:.2f} ± {std_r:.2f}")
+    mean_r, std_r = agent.evaluate(task, num_episodes=20)
+    print(f"final performance: {mean_r:.2f} ± {std_r:.2f}")
 
     # training probes csv (sampled actions during training)
     # probe_df = agent.build_probe_dataframe()
@@ -790,7 +795,6 @@ def main():
     agent.plot_training_progress()
     return agent
 
-# greedy always picks left bandit
 
 
 if __name__ == "__main__":
