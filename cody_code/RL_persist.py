@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 seed = 408
 TRIALS_PER_BLOCK = 60
-NUM_EPISODES = 500
+NUM_EPISODES = 150
 EVAL_INTERVAL = 5
 
 class Bandit:
@@ -238,7 +238,7 @@ class RLAgent:
         hidden_size=128,
         lr=3e-4,
         gamma=0.99,
-        entropy_coef=0.01,
+        entropy_coef=0.001,
         value_coef=0.5,
         norm_trials=15,
         num_stimuli=200,
@@ -270,10 +270,16 @@ class RLAgent:
             list(self.policy_network.parameters()) + list(self.id_embedding.parameters()),
             lr=lr,
         )
+        # cosine decay: lr → 0.1*lr over total training
+        self.scheduler = None  # set up in main() after NUM_EPISODES is known
 
         self.gamma = float(gamma)
         self.entropy_coef = float(entropy_coef)
         self.value_coef = float(value_coef)
+
+        # best model checkpoint (by eval reward)
+        self.best_eval_reward = -float("inf")
+        self.best_state = None
 
         self.training_stats = {
             "rewards": [],
@@ -324,6 +330,20 @@ class RLAgent:
             return torch.cat([e_chosen, e_zero], dim=-1)
         else:  # chose right
             return torch.cat([e_zero, e_chosen], dim=-1)
+
+    def checkpoint_if_best(self, eval_reward: float):
+        if eval_reward > self.best_eval_reward:
+            self.best_eval_reward = eval_reward
+            self.best_state = {
+                "policy_network": {k: v.clone() for k, v in self.policy_network.state_dict().items()},
+                "id_embedding": {k: v.clone() for k, v in self.id_embedding.state_dict().items()},
+            }
+
+    def restore_best(self):
+        if self.best_state is not None:
+            self.policy_network.load_state_dict(self.best_state["policy_network"])
+            self.id_embedding.load_state_dict(self.best_state["id_embedding"])
+            print(f"restored best model (eval reward: {self.best_eval_reward:.1f})")
 
     def _make_step_input(self, id_feats: torch.Tensor, base_state: torch.Tensor) -> torch.Tensor:
         # id_feats: (1, 2*emb), base_state: (base_dim,)
@@ -754,7 +774,7 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-    task = BanditTask(n_blocks=30, trials_per_block=TRIALS_PER_BLOCK, stim_pool_size=200)
+    task = BanditTask(n_blocks=20, trials_per_block=TRIALS_PER_BLOCK, stim_pool_size=200)
 
     agent = RLAgent(
         hidden_size=128,
@@ -766,16 +786,26 @@ def main():
 
 
 
+    # cosine LR decay: lr → 0.1*lr over training
+    agent.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        agent.optimizer, T_max=NUM_EPISODES, eta_min=3e-5,
+    )
+
     print(f"training for {NUM_EPISODES} episodes...")
     for ep in range(NUM_EPISODES):
-        reward, _ = agent.train_episode(task, render=(ep % 20 == 0), capture_probes=True)
+        reward, _ = agent.train_episode(task, render=(ep % 100 == 0), capture_probes=True)
+        agent.scheduler.step()
 
         if ep % EVAL_INTERVAL == 0:
             eval_mean, eval_std = agent.evaluate(task, num_episodes=5)
-            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f}")
+            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f} | lr: {agent.scheduler.get_last_lr()[0]:.2e}")
+            agent.checkpoint_if_best(eval_mean)
 
             agent.policy_network.train()
             agent.id_embedding.train()
+
+    # restore best checkpoint before final eval
+    agent.restore_best()
 
     print("\nfinal evaluation:")
     mean_r, std_r = agent.evaluate(task, num_episodes=20)
@@ -794,8 +824,6 @@ def main():
 
     agent.plot_training_progress()
     return agent
-
-
 
 if __name__ == "__main__":
     trained_agent = main()
