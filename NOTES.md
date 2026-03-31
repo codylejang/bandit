@@ -23,3 +23,8 @@ higher/lower score
 3. When the reward gap is large, the accumulated evidence is strong enough to 
 clearly differentiate → 90% accuracy                                         
 4. When the gap is small, the signal is noisy → near chance (just like humans)
+
+- Odd blocks (1, 3, 5...): hold out the novel stimulus (index 2, which is     
+always the newly introduced one)                                              
+- Even blocks (2, 4, 6...): hold out a familiar one (randomly chosen from     
+indices 0 or 1)
