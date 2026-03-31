@@ -148,44 +148,51 @@
   <rect x="410" y="410" width="240" height="70" rx="8" fill="#A9CCE3" stroke="#2C3E50" stroke-width="1.5" filter="url(#sh)"/>
   <text x="530" y="438" text-anchor="middle" font-size="14" font-weight="bold" fill="#2C3E50">LSTM</text>
   <text x="530" y="458" text-anchor="middle" font-size="8" fill="#2C3E50">return_activations=True</text>
-  <text x="530" y="472" text-anchor="middle" font-size="7" fill="#7F8C8D">x_dec → (logits, values, hidden₂, acts)</text>
+  <text x="530" y="472" text-anchor="middle" font-size="7" fill="#7F8C8D">x_dec → (lstm_out, values, hidden₂, acts)</text>
 
   <!-- Decision outputs -->
   <!-- Split point -->
   <circle cx="530" cy="500" r="4" fill="#566573"/>
   <line x1="530" y1="480" x2="530" y2="500" stroke="#566573" stroke-width="1.2"/>
 
-  <!-- Logits branch -->
-  <line x1="530" y1="500" x2="450" y2="525" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
-  <rect x="390" y="525" width="120" height="40" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
-  <text x="450" y="543" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">Logits</text>
-  <text x="450" y="558" text-anchor="middle" font-size="7" fill="#7F8C8D">(1, 2) → softmax</text>
+  <!-- Shared scorer branch -->
+  <line x1="530" y1="500" x2="450" y2="520" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
+  <rect x="390" y="520" width="180" height="48" rx="6" fill="#FEF9E7" stroke="#F39C12" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="480" y="537" text-anchor="middle" font-size="8" font-weight="bold" fill="#2C3E50">Shared Option Scorer</text>
+  <text x="480" y="550" text-anchor="middle" font-size="7" fill="#7F8C8D">[context ‖ emb_L] → score_L  (144→64→1)</text>
+  <text x="480" y="561" text-anchor="middle" font-size="7" fill="#7F8C8D">[context ‖ emb_R] → score_R  (same weights)</text>
 
   <!-- Value branch -->
-  <line x1="530" y1="500" x2="610" y2="525" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
-  <rect x="550" y="525" width="120" height="40" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
-  <text x="610" y="543" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">Value V(s)</text>
-  <text x="610" y="558" text-anchor="middle" font-size="7" fill="#7F8C8D">scalar</text>
+  <line x1="530" y1="500" x2="620" y2="520" stroke="#566573" stroke-width="1.2" marker-end="url(#arr)"/>
+  <rect x="580" y="520" width="100" height="35" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="630" y="538" text-anchor="middle" font-size="9" font-weight="bold" fill="#2C3E50">Value V(s)</text>
+  <text x="630" y="550" text-anchor="middle" font-size="7" fill="#7F8C8D">scalar</text>
+
+  <!-- Logits -->
+  <line x1="480" y1="568" x2="480" y2="585" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <rect x="410" y="585" width="140" height="30" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="480" y="604" text-anchor="middle" font-size="8" font-weight="bold" fill="#2C3E50">Logits = [score_L, score_R]</text>
 
   <!-- Categorical sampling -->
-  <line x1="450" y1="565" x2="450" y2="585" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
-  <rect x="390" y="585" width="120" height="35" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
-  <text x="450" y="600" text-anchor="middle" font-size="8" font-weight="bold" fill="#2C3E50">Categorical</text>
-  <text x="450" y="613" text-anchor="middle" font-size="7" fill="#7F8C8D">sample / argmax</text>
+  <line x1="480" y1="615" x2="480" y2="630" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <rect x="420" y="630" width="120" height="30" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="480" y="648" text-anchor="middle" font-size="8" font-weight="bold" fill="#2C3E50">Categorical</text>
+  <text x="480" y="657" text-anchor="middle" font-size="6" fill="#7F8C8D">sample / argmax</text>
 
   <!-- Action output -->
-  <line x1="450" y1="620" x2="450" y2="640" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
-  <rect x="400" y="640" width="100" height="35" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="2" filter="url(#sh)"/>
-  <text x="450" y="658" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">Action</text>
-  <text x="450" y="670" text-anchor="middle" font-size="7" fill="#7F8C8D">0=L, 1=R</text>
+  <line x1="480" y1="660" x2="480" y2="675" stroke="#566573" stroke-width="1" marker-end="url(#arr)"/>
+  <rect x="430" y="675" width="100" height="30" rx="6" fill="#ABEBC6" stroke="#27AE60" stroke-width="2" filter="url(#sh)"/>
+  <text x="480" y="693" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">Action</text>
+  <text x="480" y="702" text-anchor="middle" font-size="7" fill="#7F8C8D">0=L, 1=R</text>
 
   <!-- Probe captures at decision -->
-  <rect x="395" y="695" width="270" height="90" rx="6" fill="#FCF3CF" stroke="#F39C12" stroke-width="1.2"/>
-  <text x="530" y="712" text-anchor="middle" font-size="9" font-weight="bold" fill="#7D6608">PROBES (at decision step)</text>
-  <text x="405" y="730" font-size="8" fill="#7D6608">• lstm_out_dec = acts["lstm_out"][:,-1,:]  (128-d)</text>
-  <text x="405" y="745" font-size="8" fill="#7D6608">• ph_pre_dec = acts["ph_pre"][:,-1,:]  (64-d)</text>
-  <text x="405" y="760" font-size="8" fill="#7D6608">• ph_post_dec = acts["ph_post"][:,-1,:]  (64-d)</text>
-  <text x="405" y="775" font-size="8" fill="#7D6608">• vh_pre_dec / vh_post_dec  (64-d each)</text>
+  <rect x="395" y="720" width="270" height="100" rx="6" fill="#FCF3CF" stroke="#F39C12" stroke-width="1.2"/>
+  <text x="530" y="737" text-anchor="middle" font-size="9" font-weight="bold" fill="#7D6608">PROBES (at decision step)</text>
+  <text x="405" y="755" font-size="8" fill="#7D6608">• lstm_out_dec = acts["lstm_out"][:,-1,:]  (128-d)</text>
+  <text x="405" y="770" font-size="8" fill="#7D6608">• ph_pre_l / ph_post_l  (64-d, left option)</text>
+  <text x="405" y="785" font-size="8" fill="#7D6608">• ph_pre_r / ph_post_r  (64-d, right option)</text>
+  <text x="405" y="800" font-size="8" fill="#7D6608">• vh_pre_dec / vh_post_dec  (64-d each)</text>
+  <text x="405" y="815" font-size="7" fill="#7D6608" font-style="italic">scorer probes captured per-option via shared weights</text>
 
   <!-- ════════════════════════════════════════════ -->
   <!-- STEP 3: FEEDBACK -->
@@ -288,7 +295,7 @@
   <text x="295" y="1004" font-size="8" fill="#566573">IDs:  [emb_L ‖ emb_R]</text>
   <text x="295" y="1018" font-size="8" fill="#566573">Flags:  [0, 1, 0]</text>
   <text x="295" y="1032" font-size="8" fill="#566573">Reward:  0.0</text>
-  <text x="295" y="1046" font-size="8" fill="#566573">Output:  logits + value + hidden</text>
+  <text x="295" y="1046" font-size="8" fill="#566573">Output:  scores + value + hidden</text>
   <text x="295" y="1060" font-size="8" font-weight="bold" fill="#E67E22">Action:  Yes (L or R)</text>
 
   <!-- Card 3: Feedback -->

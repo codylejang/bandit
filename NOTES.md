@@ -15,3 +15,11 @@ backward pass scheduling? humans learn during task so we need to backprop more o
 
 evolution vs. lifetime learning: the episodes are "evolution" (tuning the brain's wiring), 
 while within-episode hidden state persistence is "lifetime learning" (a single human doing the task)
+
+curr model:
+1. Sees feedback (identity + reward) → LSTM hidden state updates
+2. Next time that identity appears → scorer reads the context and gives it a  
+higher/lower score                                                          
+3. When the reward gap is large, the accumulated evidence is strong enough to 
+clearly differentiate → 90% accuracy                                         
+4. When the gap is small, the signal is noisy → near chance (just like humans)

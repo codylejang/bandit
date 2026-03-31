@@ -96,65 +96,71 @@
   <line x1="350" y1="480" x2="350" y2="510" stroke="#566573" stroke-width="1.2"/>
 
   <!-- ══════════════════════════════════ -->
-  <!-- SECTION: Policy Head (left) -->
+  <!-- SECTION: Shared Option Scorer (left) -->
   <!-- ══════════════════════════════════ -->
-  <text x="80" y="550" font-size="14" font-weight="bold" fill="#2C3E50">Policy Head</text>
+  <text x="30" y="550" font-size="14" font-weight="bold" fill="#2C3E50">Shared Option Scorer (Policy Head)</text>
 
-  <!-- Arrow split to policy head -->
-  <line x1="350" y1="510" x2="180" y2="560" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <!-- Arrow split to scorer -->
+  <line x1="350" y1="510" x2="180" y2="555" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
 
-  <!-- ph_fc1 -->
-  <rect x="50" y="560" width="260" height="45" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
-  <text x="180" y="580" text-anchor="middle" font-size="11" fill="#2C3E50">Linear (ph_fc1)</text>
-  <text x="180" y="596" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">128 → 64</text>
+  <!-- Scorer description -->
+  <rect x="20" y="558" width="320" height="48" rx="8" fill="#FEF9E7" stroke="#F39C12" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="576" text-anchor="middle" font-size="10" fill="#2C3E50">Each option scored independently via shared weights</text>
+  <text x="180" y="596" text-anchor="middle" font-size="9" fill="#E74C3C" font-weight="bold">No positional slot bias — symmetry guaranteed</text>
 
-  <!-- Arrow -->
-  <line x1="180" y1="605" x2="180" y2="625" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
-  <text x="280" y="618" font-size="8" fill="#7F8C8D">ph_pre</text>
-
-  <!-- ph_relu -->
-  <rect x="50" y="625" width="260" height="40" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
-  <text x="180" y="650" text-anchor="middle" font-size="11" fill="#2C3E50">ReLU (ph_relu)</text>
+  <!-- Concat: context + option_emb -->
+  <rect x="20" y="625" width="320" height="40" rx="8" fill="#D4E6F1" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="643" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">[ lstm_out ‖ option_emb ]</text>
+  <text x="180" y="659" text-anchor="middle" font-size="8" fill="#7F8C8D" font-style="italic">dim = 128 + 16 = 144  (run once per option)</text>
 
   <!-- Arrow -->
   <line x1="180" y1="665" x2="180" y2="685" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
-  <text x="280" y="678" font-size="8" fill="#7F8C8D">ph_post</text>
 
-  <!-- ph_drop -->
+  <!-- ph_fc1 -->
   <rect x="50" y="685" width="260" height="40" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
-  <text x="180" y="707" text-anchor="middle" font-size="11" fill="#2C3E50">Dropout (ph_drop, p=0.0)</text>
+  <text x="180" y="703" text-anchor="middle" font-size="11" fill="#2C3E50">Linear (ph_fc1)</text>
+  <text x="180" y="718" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">144 → 64</text>
 
   <!-- Arrow -->
-  <line x1="180" y1="725" x2="180" y2="745" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="725" x2="180" y2="740" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <text x="280" y="735" font-size="8" fill="#7F8C8D">ph_pre</text>
+
+  <!-- ph_relu + dropout -->
+  <rect x="50" y="740" width="260" height="35" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="762" text-anchor="middle" font-size="11" fill="#2C3E50">ReLU → Dropout (p=0.0)</text>
+
+  <!-- Arrow -->
+  <line x1="180" y1="775" x2="180" y2="790" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <text x="280" y="785" font-size="8" fill="#7F8C8D">ph_post</text>
 
   <!-- ph_fc2 -->
-  <rect x="50" y="745" width="260" height="45" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
-  <text x="180" y="765" text-anchor="middle" font-size="11" fill="#2C3E50">Linear (ph_fc2)</text>
-  <text x="180" y="781" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">64 → 2</text>
+  <rect x="50" y="790" width="260" height="40" rx="8" fill="#F9E79F" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="808" text-anchor="middle" font-size="11" fill="#2C3E50">Linear (ph_fc2)</text>
+  <text x="180" y="823" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">64 → 1  (scalar score per option)</text>
 
   <!-- Arrow -->
-  <line x1="180" y1="790" x2="180" y2="815" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="830" x2="180" y2="850" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
 
-  <!-- Logits -->
-  <rect x="50" y="815" width="260" height="45" rx="8" fill="#ABEBC6" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
-  <text x="180" y="835" text-anchor="middle" font-size="12" font-weight="bold" fill="#2C3E50">Logits</text>
-  <text x="180" y="852" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">(B, S, 2)</text>
+  <!-- Logits = [score_L, score_R] -->
+  <rect x="50" y="850" width="260" height="45" rx="8" fill="#ABEBC6" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="870" text-anchor="middle" font-size="12" font-weight="bold" fill="#2C3E50">Logits = [ score_L , score_R ]</text>
+  <text x="180" y="888" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">(1, 2) — scores from same weights</text>
 
   <!-- Arrow -->
-  <line x1="180" y1="860" x2="180" y2="885" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="895" x2="180" y2="915" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
 
   <!-- Categorical -->
-  <rect x="30" y="885" width="300" height="55" rx="8" fill="#ABEBC6" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
-  <text x="180" y="908" text-anchor="middle" font-size="11" font-weight="bold" fill="#2C3E50">Categorical(softmax(logits))</text>
-  <text x="180" y="928" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">sample (train) / argmax (eval)</text>
+  <rect x="30" y="915" width="300" height="50" rx="8" fill="#ABEBC6" stroke="#2C3E50" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="180" y="937" text-anchor="middle" font-size="11" font-weight="bold" fill="#2C3E50">Categorical(softmax(logits))</text>
+  <text x="180" y="955" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">sample (train) / argmax (eval)</text>
 
   <!-- Arrow -->
-  <line x1="180" y1="940" x2="180" y2="965" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="965" x2="180" y2="985" stroke="#566573" stroke-width="1.2" marker-end="url(#arrowhead)"/>
 
   <!-- Action -->
-  <rect x="80" y="965" width="200" height="45" rx="8" fill="#ABEBC6" stroke="#27AE60" stroke-width="2" filter="url(#shadow)"/>
-  <text x="180" y="985" text-anchor="middle" font-size="12" font-weight="bold" fill="#2C3E50">Action</text>
-  <text x="180" y="1002" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">0 = Left, 1 = Right</text>
+  <rect x="80" y="985" width="200" height="45" rx="8" fill="#ABEBC6" stroke="#27AE60" stroke-width="2" filter="url(#shadow)"/>
+  <text x="180" y="1005" text-anchor="middle" font-size="12" font-weight="bold" fill="#2C3E50">Action</text>
+  <text x="180" y="1022" text-anchor="middle" font-size="9" fill="#7F8C8D" font-style="italic">0 = Left, 1 = Right</text>
 
   <!-- ══════════════════════════════════ -->
   <!-- SECTION: Value Head (right) -->
@@ -207,7 +213,7 @@
   <text x="30" y="1060" font-size="14" font-weight="bold" fill="#2C3E50">Training Loss</text>
 
   <rect x="30" y="1070" width="720" height="55" rx="8" fill="#F5B7B1" stroke="#E74C3C" stroke-width="1.5" filter="url(#shadow)"/>
-  <text x="390" y="1092" text-anchor="middle" font-size="13" font-weight="bold" fill="#2C3E50">L = policy_loss + 0.5 × value_loss − 0.002 × entropy</text>
+  <text x="390" y="1092" text-anchor="middle" font-size="13" font-weight="bold" fill="#2C3E50">L = policy_loss + 0.5 × value_loss − 0.003 × entropy</text>
   <text x="390" y="1115" text-anchor="middle" font-size="9" fill="#7F8C8D">policy: −(log π · advantage)  |  value: MSE(V, returns)  |  advantage = returns − V.detach()  |  grad_clip=1.0</text>
 
   <!-- Arrows to loss -->
@@ -257,9 +263,9 @@
   <text x="795" y="480" text-anchor="middle" font-size="10" font-weight="bold" fill="#2C3E50">Probe Points</text>
   <text x="795" y="498" text-anchor="middle" font-size="8" fill="#566573">(captured at decision step)</text>
   <text x="720" y="518" font-size="8" fill="#566573">• lstm_out  (128-d)</text>
-  <text x="720" y="534" font-size="8" fill="#566573">• ph_pre / ph_post  (64-d)</text>
-  <text x="720" y="550" font-size="8" fill="#566573">• vh_pre / vh_post  (64-d)</text>
-  <text x="720" y="566" font-size="8" fill="#566573">• logits / value outputs</text>
+  <text x="720" y="534" font-size="8" fill="#566573">• ph_pre_l / ph_post_l  (64-d)</text>
+  <text x="720" y="550" font-size="8" fill="#566573">• ph_pre_r / ph_post_r  (64-d)</text>
+  <text x="720" y="566" font-size="8" fill="#566573">• vh_pre / vh_post  (64-d)</text>
   <text x="720" y="582" font-size="8" fill="#566573">• h_stim / h_dec / h_fb</text>
 
   <!-- ══════════════════════════════════ -->
