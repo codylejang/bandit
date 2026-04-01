@@ -20,7 +20,13 @@ Thumbs.db
 # Project specific
 luis_code/__pycache__
 luis_code/.venv
-/data/
+
+data/aquinoshareddata/neural
+data/aquinoshareddata/New Folder
+data/aquinoshareddata/shared.rar
+data/aquinoshareddata/zjqm9-datacite.json
+
+
 probe_rows.csv
 probe_rows_greedy.csv
 
@@ -31,3 +37,9 @@ AGENTS.md
 df_metrics_all.csv
 
 data.zip
+/data/aquinoshareddata/shared/neural
+data/aquinoshareddata/shared/behavior/aquinodata_tarkArmPresentation.txt
+data/aquinoshareddata/aquinodata_tarkArmPresentation.txt
+data/probe_rows_greedy_01_nochoice.csv
+data/probe_rows_00.csv
+data/probe_rows_01.csv

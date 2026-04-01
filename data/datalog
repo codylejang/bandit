@@ -1,0 +1,3 @@
+probe_rows_00.csv: first version
+probe_rows_01.csv: second version
+probe_rows_greedy_01_nochoice.csv: first greedy version but error in choice variable, all left choices
