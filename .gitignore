@@ -43,3 +43,4 @@ data/aquinoshareddata/aquinodata_tarkArmPresentation.txt
 data/probe_rows_greedy_01_nochoice.csv
 data/probe_rows_00.csv
 data/probe_rows_01.csv
+.DS_Store
