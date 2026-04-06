@@ -28,3 +28,9 @@ clearly differentiate → 90% accuracy
 always the newly introduced one)                                              
 - Even blocks (2, 4, 6...): hold out a familiar one (randomly chosen from     
 indices 0 or 1)
+
+look at q vals in human data
+
+train on sim, test on human trial bandit data and measure similarity to humans (in q and bandit selection)
+
+per episode, test the model on study bandits, select the one with the highest similarity to humans
