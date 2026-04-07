@@ -31,6 +31,8 @@ indices 0 or 1)
 
 look at q vals in human data
 
-train on sim, test on human trial bandit data and measure similarity to humans (in q and bandit selection)
+train on simulation, test on human trial bandit data and measure similarity to humans (in q and bandit selection)
 
-per episode, test the model on study bandits, select the one with the highest similarity to humans
+per episode, test the model on human study bandits, select the one with the highest similarity to humans
+- different metrics can be observed to gauge similarity:
+- q val estimation or direct bandit accuracy percentage per trial

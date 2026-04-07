@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import random
@@ -13,6 +14,7 @@ seed = 408
 TRIALS_PER_BLOCK = 15
 NUM_EPISODES = 300
 EVAL_INTERVAL = 5
+CHECKPOINT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
 
 class Bandit:
     def __init__(self, stim_id: int, true_prob: float):
@@ -287,7 +289,8 @@ class RLAgent:
 
         self.state_encoder = StateEncoder(norm_trials=norm_trials)
 
-        # identity embeddings for left/right options and chosen option at feedback
+        # identity embeddings: re-randomized every episode (not learned across episodes)
+        # provides distinguishable but arbitrary identity tokens, like fresh paintings
         self.id_embedding = nn.Embedding(self.num_stimuli, self.id_emb_dim).to(self.device)
 
         # total input dim = left_emb + right_emb + base_state
@@ -300,9 +303,9 @@ class RLAgent:
             id_emb_dim=self.id_emb_dim,
         ).to(self.device)
 
-        # optimize both lstm weights and embedding table
+        # only optimize LSTM/policy weights — embeddings are random per episode
         self.optimizer = optim.Adam(
-            list(self.policy_network.parameters()) + list(self.id_embedding.parameters()),
+            self.policy_network.parameters(),
             lr=lr,
         )
         # cosine decay: lr → 0.1*lr over total training
@@ -312,7 +315,7 @@ class RLAgent:
         self.entropy_coef = float(entropy_coef)
         self.value_coef = float(value_coef)
 
-        # best model checkpoint (by eval reward)
+        # best model checkpoint (by eval reward) — only LSTM/policy weights
         self.best_eval_reward = -float("inf")
         self.best_state = None
 
@@ -377,14 +380,25 @@ class RLAgent:
             self.best_eval_reward = eval_reward
             self.best_state = {
                 "policy_network": {k: v.clone() for k, v in self.policy_network.state_dict().items()},
-                "id_embedding": {k: v.clone() for k, v in self.id_embedding.state_dict().items()},
             }
 
     def restore_best(self):
         if self.best_state is not None:
             self.policy_network.load_state_dict(self.best_state["policy_network"])
-            self.id_embedding.load_state_dict(self.best_state["id_embedding"])
             print(f"restored best model (eval reward: {self.best_eval_reward:.1f})")
+
+    def save_checkpoint(self, episode, checkpoint_dir=CHECKPOINT_DIR):
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        path = os.path.join(checkpoint_dir, f"ep{episode:03d}.pt")
+        torch.save({
+            "episode": episode,
+            "policy_network": self.policy_network.state_dict(),
+        }, path)
+
+    def load_checkpoint(self, path):
+        ckpt = torch.load(path, map_location=self.device)
+        self.policy_network.load_state_dict(ckpt["policy_network"])
+        return ckpt.get("episode", -1)
 
     def _make_step_input(self, id_feats: torch.Tensor, base_state: torch.Tensor) -> torch.Tensor:
         # id_feats: (1, 2*emb), base_state: (base_dim,)
@@ -396,9 +410,13 @@ class RLAgent:
         # safe conversion for csv logging
         return t.detach().cpu().float().view(-1).tolist()
 
+    def randomize_embeddings(self):
+        """Fresh random identity tokens — like seeing new paintings."""
+        nn.init.normal_(self.id_embedding.weight, mean=0.0, std=1.0)
+
     def train_episode(self, task: BanditTask, render=False, capture_probes=True):
         self.policy_network.train()
-        self.id_embedding.train()
+        self.randomize_embeddings()
 
         task.reset_episode()
 
@@ -561,7 +579,7 @@ class RLAgent:
                 self.optimizer.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(
-                    list(self.policy_network.parameters()) + list(self.id_embedding.parameters()),
+                    self.policy_network.parameters(),
                     1.0,
                 )
                 self.optimizer.step()
@@ -574,7 +592,6 @@ class RLAgent:
 
     def evaluate(self, task: BanditTask, num_episodes=10):
         self.policy_network.eval()
-        self.id_embedding.eval()
 
         total_rewards = []
         all_sides = []       # 0=left, 1=right (actual side)
@@ -585,6 +602,7 @@ class RLAgent:
         with torch.no_grad():
             for _ in range(num_episodes):
                 task.reset_episode()
+                self.randomize_embeddings()
                 episode_reward = 0.0
 
                 for block in range(task.n_blocks):
@@ -660,7 +678,6 @@ class RLAgent:
           - we capture the same "what feeds the head" + head hidden activations at decision
         """
         self.policy_network.eval()
-        self.id_embedding.eval()
 
         if clear_existing:
             self.training_stats["greedy_probe_rows"] = []
@@ -668,6 +685,7 @@ class RLAgent:
         with torch.no_grad():
             for ep_i in range(num_episodes):
                 task.reset_episode()
+                self.randomize_embeddings()
                 seen_count = defaultdict(int)  # keep the same novelty bookkeeping for analysis
                 episode_reward = 0.0
 
@@ -932,7 +950,6 @@ def main():
         hidden_size=128,
         lr=3e-4,
         norm_trials=task.trials_per_block,
-        num_stimuli=task.stim_pool_size,
         id_emb_dim=16,
     )
 
@@ -958,6 +975,7 @@ def main():
             agent.training_stats["greedy_acc_hard"].append((ep, acc_hard))
             print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f} | left%: {left_frac:.2f} | slot0%: {slot0_frac:.2f} | acc: {accuracy:.2f} (easy:{acc_easy:.2f} hard:{acc_hard:.2f}) | lr: {agent.scheduler.get_last_lr()[0]:.2e}")
             agent.checkpoint_if_best(eval_mean)
+            agent.save_checkpoint(ep)
 
             agent.policy_network.train()
             agent.id_embedding.train()
