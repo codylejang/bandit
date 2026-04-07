@@ -3,7 +3,7 @@
 from pathlib import Path
 PROBEROWS_CSV_PATH = "data/probe_rows_01.csv" # version 1 "cody_code/probe_rows_00.csv"
 # PROBEROWS_CSV_PATH = "data/probe_rows_greedy_01.csv" # version 1 "cody_code/probe_rows_00.csv"
-PROBEROWS_CSV_PATH = "probe_rows_greedy_02.csv" # version 1 "cody_code/probe_rows_00.csv"
+PROBEROWS_CSV_PATH = "probe_rows_greedy_02.csv" #  "cody_code/probe_rows_00.csv"
 AQUINO_BEH_PQT_DATA = Path("data/aquinoshareddata/shared/behavior/aquino_behavior.parquet")
 
 
