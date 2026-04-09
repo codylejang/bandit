@@ -13,6 +13,7 @@ in synchronized mode (model observes human's choices & rewards) and computes:
 - Synchronized mode means the model sees the human's (choice, reward) at feedback
 so the LSTM hidden state evolves as if the model were "watching" the human play
 - Beta-posterior Q values are recomputed from scratch per block (identical formula)
+- Data loaded from parquet (all 22 subjects)
 """
 
 import os
@@ -25,23 +26,11 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from scipy import stats
 
-# import from RL_persist in same directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from RL_persist import RLAgent, BlockBeta, CHECKPOINT_DIR
+from eval_human_baseline import load_human_data
 
-CSV_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_behavior_csvs")
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_results")
-
-
-# data loading
-
-def load_human_data():
-    """Load enriched human CSV (with pre-computed Q values)."""
-    path = os.path.join(CSV_DIR, "all_subjects_with_qvalues.csv")
-    df = pd.read_csv(path)
-    # ensure sorted by subject, session, block, trial
-    df = df.sort_values(["sub_id", "session", "block", "trial"]).reset_index(drop=True)
-    return df
 
 
 # synchronized replay
@@ -51,16 +40,11 @@ def replay_human_trials(agent, human_df):
     """
     Replay every human trial through the model in synchronized mode.
 
-    Stim ID remapping: human stim IDs are remapped into embedding slots
-    200+ (TEST_STIM_OFFSET), which were never touched during training.
-    This gives the model a completely fresh start — untrained embeddings
-    it has never seen, just like a human seeing new paintings.
-
-    At each trial:
-      - present same (left_stim, right_stim) pair (remapped IDs)
-      - record model's P(left), greedy choice, logit_diff
-      - feed back the HUMAN's (choice, reward) so hidden state stays in sync
-      - track beta-posterior Q/Unc identically to human pipeline
+    Per subject (= one episode):
+      - randomize embeddings (fresh identity tokens)
+      - remap stim IDs to sequential slots
+      - reset hidden state at block boundaries
+      - at each trial: stim → decision → feedback (using human's choice/reward)
 
     Returns a DataFrame with per-trial model + human columns.
     """
@@ -68,15 +52,15 @@ def replay_human_trials(agent, human_df):
 
     rows = []
 
-    for (sub, sess), grp in human_df.groupby(["sub_id", "session"]):
+    for sub, grp in human_df.groupby("sub_id"):
         hidden = None
         beta_map = {}
         current_block = None
 
-        # fresh random embeddings for this session (= fresh episode)
+        # fresh random embeddings for this subject (= fresh episode)
         agent.randomize_embeddings()
 
-        # remap human stim IDs to sequential slots for this session
+        # remap stim IDs to sequential slots for this subject
         unique_stims = sorted(
             set(grp["left_stim_id"].unique()) | set(grp["right_stim_id"].unique())
         )
@@ -109,12 +93,12 @@ def replay_human_trials(agent, human_df):
 
             info = {"block": block, "trial": trial}
 
-            # ── stim step (remapped IDs) ──
+            # stim step
             id_feats = agent._embed_pair(left_id, right_id)
             x_stim = agent._make_step_input(id_feats, agent.state_encoder.stim(info))
             _, _, hidden = agent.policy_network(x_stim, hidden)
 
-            # ── decision step ──
+            # decision step
             x_dec = agent._make_step_input(id_feats, agent.state_encoder.decision(info))
             lstm_out, _, hidden = agent.policy_network(x_dec, hidden)
             context = lstm_out[:, -1, :]
@@ -132,7 +116,7 @@ def replay_human_trials(agent, human_df):
             model_choice = int(logits.argmax(dim=-1).item())
             logit_diff = float((logits[0, 0] - logits[0, 1]).item())
 
-            # ── feedback step: use HUMAN's choice & reward (remapped ID) ──
+            # feedback step: use HUMAN's choice & reward
             human_choice = int(row["choice_side"])
             human_reward = float(row["reward"])
             human_chosen_id_orig = int(row["chosen_stim_id"])
@@ -144,13 +128,12 @@ def replay_human_trials(agent, human_df):
             )
             _, _, hidden = agent.policy_network(x_fb, hidden)
 
-            # update beta with human's observed reward (keyed by original ID)
+            # update beta with human's observed reward
             beta_map[human_chosen_id_orig].update(human_reward)
 
             rows.append(
                 {
                     "sub_id": row["sub_id"],
-                    "session": row["session"],
                     "block": block,
                     "trial": trial,
                     "left_stim_id": left_id_orig,
@@ -200,8 +183,6 @@ def compute_metrics(replay_df, n_bins=8):
     m["choice_agreement"] = float((replay_df["model_choice"] == replay_df["human_choice"]).mean())
 
     # 2. NLL of human choices under model softmax
-    #    human_choice=0 → chose left → use model_p_left
-    #    human_choice=1 → chose right → use 1-model_p_left
     eps = 1e-7
     p_human = np.where(
         replay_df["human_choice"] == 0,
@@ -215,7 +196,7 @@ def compute_metrics(replay_df, n_bins=8):
     df = replay_df.copy()
     df["dQ_bin"] = pd.qcut(df["human_dQ"], q=n_bins, duplicates="drop")
     binned = df.groupby("dQ_bin", observed=True).agg(
-        human_p_left=("human_choice", lambda x: 1.0 - x.mean()),  # choice_side=0 is left
+        human_p_left=("human_choice", lambda x: 1.0 - x.mean()),
         model_p_left=("model_p_left", "mean"),
     )
     if len(binned) >= 3:
@@ -259,7 +240,6 @@ def evaluate_all_checkpoints(human_df, checkpoint_dir=CHECKPOINT_DIR):
 
     print(f"found {len(ckpt_files)} checkpoints in {checkpoint_dir}")
 
-    # build a fresh agent (weights will be overwritten by each checkpoint)
     agent = RLAgent(hidden_size=128, id_emb_dim=16)
 
     summary_rows = []
@@ -291,13 +271,12 @@ def select_best(summary_df):
     """
     df = summary_df.copy()
 
-    # z-score each metric, flip NLL sign so higher = better
     for col in ["choice_agreement", "policy_shape_r", "logit_dq_r2"]:
         mu, sd = df[col].mean(), df[col].std()
         df[f"{col}_z"] = (df[col] - mu) / (sd + 1e-8)
 
     mu, sd = df["nll"].mean(), df["nll"].std()
-    df["nll_z"] = -(df["nll"] - mu) / (sd + 1e-8)  # flip: lower NLL → higher z
+    df["nll_z"] = -(df["nll"] - mu) / (sd + 1e-8)
 
     df["composite"] = (
         df["choice_agreement_z"]
@@ -319,7 +298,6 @@ def plot_results(summary_df, best_ep, human_df, checkpoint_dir=CHECKPOINT_DIR):
     fig, axes = plt.subplots(2, 3, figsize=(17, 10))
     eps = summary_df.index.values
 
-    # (0,0) choice agreement
     axes[0, 0].plot(eps, summary_df["choice_agreement"], "b-o", markersize=3)
     axes[0, 0].axvline(best_ep, color="red", ls="--", alpha=0.6, label=f"best={best_ep}")
     axes[0, 0].set_title("choice agreement")
@@ -327,28 +305,24 @@ def plot_results(summary_df, best_ep, human_df, checkpoint_dir=CHECKPOINT_DIR):
     axes[0, 0].set_ylabel("fraction")
     axes[0, 0].legend(fontsize=8)
 
-    # (0,1) NLL
     axes[0, 1].plot(eps, summary_df["nll"], "g-o", markersize=3)
     axes[0, 1].axvline(best_ep, color="red", ls="--", alpha=0.6)
     axes[0, 1].set_title("NLL of human choices")
     axes[0, 1].set_xlabel("episode")
     axes[0, 1].set_ylabel("NLL (lower = better)")
 
-    # (0,2) policy shape r
     axes[0, 2].plot(eps, summary_df["policy_shape_r"], "m-o", markersize=3)
     axes[0, 2].axvline(best_ep, color="red", ls="--", alpha=0.6)
     axes[0, 2].set_title("policy shape correlation")
     axes[0, 2].set_xlabel("episode")
     axes[0, 2].set_ylabel("pearson r")
 
-    # (1,0) logit_diff ~ dQ r²
     axes[1, 0].plot(eps, summary_df["logit_dq_r2"], "c-o", markersize=3)
     axes[1, 0].axvline(best_ep, color="red", ls="--", alpha=0.6)
     axes[1, 0].set_title("logit_diff ~ dQ r²")
     axes[1, 0].set_xlabel("episode")
     axes[1, 0].set_ylabel("r²")
 
-    # (1,1) composite score
     if "composite" in summary_df.columns:
         axes[1, 1].plot(eps, summary_df["composite"], "k-o", markersize=3)
         axes[1, 1].axvline(best_ep, color="red", ls="--", alpha=0.6)
@@ -356,7 +330,7 @@ def plot_results(summary_df, best_ep, human_df, checkpoint_dir=CHECKPOINT_DIR):
         axes[1, 1].set_xlabel("episode")
         axes[1, 1].set_ylabel("z-score")
 
-    # (1,2) best model policy curve vs human
+    # best model policy curve vs human
     agent = RLAgent(hidden_size=128, id_emb_dim=16)
     best_path = os.path.join(checkpoint_dir, f"ep{best_ep:03d}.pt")
     agent.load_checkpoint(best_path)
@@ -384,6 +358,7 @@ def plot_results(summary_df, best_ep, human_df, checkpoint_dir=CHECKPOINT_DIR):
     plt.close()
     print(f"saved figure to {out_path}")
 
+
 def main():
     print("=== human-similarity evaluation pipeline ===\n")
 
@@ -396,7 +371,6 @@ def main():
     print(f"\n>>> best episode: {best_ep}")
     print(f"    metrics: {summary.loc[best_ep].to_dict()}\n")
 
-    # save summary csv
     os.makedirs(OUT_DIR, exist_ok=True)
     csv_path = os.path.join(OUT_DIR, "checkpoint_metrics.csv")
     summary_with_composite.to_csv(csv_path)

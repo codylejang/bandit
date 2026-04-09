@@ -36,3 +36,24 @@ train on simulation, test on human trial bandit data and measure similarity to h
 per episode, test the model on human study bandits, select the one with the highest similarity to humans
 - different metrics can be observed to gauge similarity:
 - q val estimation or direct bandit accuracy percentage per trial
+
+embedding randomization structural change:
+RL_persist.py:                                                                
+  - randomize_embeddings() — re-initializes embedding table with fresh N(0,1)  
+  vectors                                                                       
+  - Called at the start of every training episode, eval episode, and greedy
+  probe episode                                                                 
+  - Embeddings removed from optimizer — only LSTM/policy weights are learned    
+  - Checkpoints only save/load policy network weights (no embeddings)           
+                                                                                
+  eval_human_similarity.py:                                                     
+  - Calls randomize_embeddings() per human session (one session = one episode)  
+  - Human stim IDs remapped to sequential 0,1,2... slots (arbitrary, just needs 
+  consistency within session)                                                  
+  - No reserved slot ranges needed — every session gets completely fresh random 
+  embeddings
+
+  is it chance?
+  - might even hard for two humans to perform similarly to each other
+  - compare humans together see if the composite score is the same
+  - non repeating pairs

@@ -411,7 +411,7 @@ class RLAgent:
         return t.detach().cpu().float().view(-1).tolist()
 
     def randomize_embeddings(self):
-        """Fresh random identity tokens — like seeing new paintings."""
+        #Fresh random identity tokens — like seeing new paintings
         nn.init.normal_(self.id_embedding.weight, mean=0.0, std=1.0)
 
     def train_episode(self, task: BanditTask, render=False, capture_probes=True):
