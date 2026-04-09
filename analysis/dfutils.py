@@ -1,8 +1,8 @@
 
 import os
-from helpers import norm_list
+from analysis.helpers import norm_list
 import polars as pl
-from experiment_config import PROBEROWS_CSV_PATH, N_H_DEC_NEURONS, LAYERS
+from analysis.experiment_config import PROBEROWS_CSV_PATH, N_H_DEC_NEURONS, LAYERS
 import polars.selectors as cs
 
 def pull_neuron_column(df, layer, neuron_id, other_cols) -> pl.DataFrame:
@@ -21,7 +21,6 @@ def load_dataframe(episode="max", verbose=True) -> pl.DataFrame:
         print("Loaded DataFrame:")
         describe_df(df)
     
-    
     if "episode_idx" in df.columns:
         ep_idx_var = "episode_idx"
         is_greedy_dataset = False
@@ -35,10 +34,9 @@ def load_dataframe(episode="max", verbose=True) -> pl.DataFrame:
         # rename every lstm_out_dec to h_dec to match non-greedy dataset
         df = df.rename({f"lstm_out_dec_{i}": f"h_dec_{i}" for i in range(N_H_DEC_NEURONS)})
 
-
+    
     # Filter by episode if specified
     max_episode = df.select(pl.col(ep_idx_var).max()).item()
-
 
     if episode != None:
         if episode == "max":
@@ -53,6 +51,9 @@ def load_dataframe(episode="max", verbose=True) -> pl.DataFrame:
         if verbose:
             print(f"Filtered DataFrame where {ep_idx_var} == {episode}|(max ep={max_episode})")
             describe_df(df)
+
+    # Rename behavioral vars to match aquino's original data set
+    df = df.rename({"block": "blockID","trial":"trialInBlock"})
 
     return df
 

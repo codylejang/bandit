@@ -1,32 +1,46 @@
+from analysis.experiment_config import BANDIT_FEATURES, CHOICE_VARS
+from analysis.dfutils import load_dataframe
 
-
-#########################################################################
-# Experiment Config
-from experiment_config import BANDIT_FEATURES, CHOICE_VARS, LAYERS, TRIALS_PER_BLOCK, LAYER_SIZES
-#########################################################################
 # INIT ----
 import polars as pl
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-import scipy.stats as stats
 import statsmodels.api as sm
-from dfutils import load_dataframe, pull_neuron_column, get_layer_columns,parse_neuron_id
-from helpers import norm_list
+from analysis.helpers import norm_list
 import pandas as pd
 
 
-df = load_dataframe(episode="max", verbose=True)
-df = df.select(norm_list(["block", "trial", *BANDIT_FEATURES, *CHOICE_VARS, "reward"]))
-df = df.with_columns([
-    (1 - pl.col("choice_side")).alias("chose_left") 
-])
+
+
+DF = load_dataframe(episode="max", verbose=True)
+DF = DF.select(norm_list(["blockID", "trialInBlock", *BANDIT_FEATURES,
+                           "choice_side","logit_diff", "reward"]))
+
+
+
+# FIGURE 1F - logistic
+df = DF.select(["blockID", "trialInBlock", "dQ","dUnc","dNov","choice_side"])
 
 df = df.with_columns([
     (1 - pl.col("choice_side")).alias("chose_left") 
 ])
 
-df = df.with_columns([
+df = df.with_columns(pl.lit(0).alias("patientId"))
+
+from analysis.analysisutils import anz_fig_1F
+df = anz_fig_1F(df)
+
+
+
+
+# OTHER FIGS
+# BINNN
+df = DF.with_columns([
+    (1 - pl.col("choice_side")).alias("chose_left") 
+])
+
+df = DF.with_columns([
     (pl.col("dQ").qcut(4).rank(method="dense") - 1)
         .cast(pl.UInt8)
         .alias("dQ_binned"),
