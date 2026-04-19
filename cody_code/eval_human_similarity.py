@@ -103,13 +103,9 @@ def replay_human_trials(agent, human_df):
             lstm_out, _, hidden = agent.policy_network(x_dec, hidden)
             context = lstm_out[:, -1, :]
 
-            emb_l = agent.id_embedding(
-                torch.tensor([left_id], device=agent.device, dtype=torch.long)
-            )
-            emb_r = agent.id_embedding(
-                torch.tensor([right_id], device=agent.device, dtype=torch.long)
-            )
-            logits = agent.policy_network.score_options(context, emb_l, emb_r)
+            emb_l = agent.id_embedding(torch.tensor([left_id], device=agent.device, dtype=torch.long))
+            emb_r = agent.id_embedding(torch.tensor([right_id], device=agent.device, dtype=torch.long))
+            logits = agent.policy_network.get_policy_logits(context, emb_l, emb_r)
 
             probs = F.softmax(logits, dim=-1)
             model_p_left = float(probs[0, 0].item())
@@ -240,7 +236,7 @@ def evaluate_all_checkpoints(human_df, checkpoint_dir=CHECKPOINT_DIR):
 
     print(f"found {len(ckpt_files)} checkpoints in {checkpoint_dir}")
 
-    agent = RLAgent(hidden_size=128, id_emb_dim=16)
+    agent = RLAgent(hidden_size=128)
 
     summary_rows = []
 
@@ -331,7 +327,7 @@ def plot_results(summary_df, best_ep, human_df, checkpoint_dir=CHECKPOINT_DIR):
         axes[1, 1].set_ylabel("z-score")
 
     # best model policy curve vs human
-    agent = RLAgent(hidden_size=128, id_emb_dim=16)
+    agent = RLAgent(hidden_size=128)
     best_path = os.path.join(checkpoint_dir, f"ep{best_ep:03d}.pt")
     agent.load_checkpoint(best_path)
     replay_df = replay_human_trials(agent, human_df)
@@ -377,7 +373,7 @@ def main():
     print(f"saved metrics to {csv_path}")
 
     # save best-model replay for downstream analysis
-    agent = RLAgent(hidden_size=128, id_emb_dim=16)
+    agent = RLAgent(hidden_size=128)
     best_path = os.path.join(CHECKPOINT_DIR, f"ep{best_ep:03d}.pt")
     agent.load_checkpoint(best_path)
     replay_df = replay_human_trials(agent, human_df)

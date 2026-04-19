@@ -10,6 +10,7 @@ The paper says the reward probabilities were “reset at the beginning of every 
 familiarity carries, but value does not
 if they were told that the probabilities would be reset, then this is not an accurate gauge. 
 for instance, I would just treat all 3 as novel at the start of every block if i knew that they were being reset.
+hence, i presume that this serves as only a familiarity bias gauge
 
 backward pass scheduling? humans learn during task so we need to backprop more often?
 
@@ -17,12 +18,37 @@ evolution vs. lifetime learning: the episodes are "evolution" (tuning the brain'
 while within-episode hidden state persistence is "lifetime learning" (a single human doing the task)
 
 curr model:
-1. Sees feedback (identity + reward) → LSTM hidden state updates
-2. Next time that identity appears → scorer reads the context and gives it a  
-higher/lower score                                                          
-3. When the reward gap is large, the accumulated evidence is strong enough to 
-clearly differentiate → 90% accuracy                                         
-4. When the gap is small, the signal is noisy → near chance (just like humans)
+Step 1 — Stimulus: The LSTM receives the identity embeddings of the two       
+offered options (left + right) concatenated with a "stimulus" flag. No        
+decision happens here. This lets the LSTM encode which options are on the     
+table before being asked to choose. The hidden state updates but no loss is  
+computed.                                                                    
+
+Step 2 — Decision: Same pair embeddings + "decision" flag. Now we tap the LSTM
+output to:
+- Score each option through the shared scorer (context + individual option    
+embedding → scalar per option → softmax → action)                             
+- Read the value head's estimate                                             
+- Predict expected reward via the auxiliary head                              
+                                                                            
+This is the only step that produces loss-relevant quantities (log-prob, value,
+aux prediction). The action is sampled here.                                 
+                                                                            
+Step 3 — Feedback: The chosen identity embedding is placed in its actual slot 
+(left or right), the other slot is zeroed, and the actual reward scalar fills
+the reward position in the state vector. This tells the LSTM "this identity,  
+in this position, produced this reward." The hidden state absorbs the outcome
+— no loss is computed, but this is how the LSTM learns to associate identities
+with reward histories across trials within a block.
+
+Then the update cycle: Every update_freq trials (default 5), the buffers of   
+log-probs, values, rewards, and aux predictions are used to compute the
+combined loss (policy gradient + value MSE + entropy bonus + aux reward       
+prediction MSE). After backward + optimizer step, the hidden state is detached
+so gradients don't flow back through the previous window, and the buffers   
+reset. The hidden state values carry forward though — the LSTM remembers what
+it saw, it just can't be credited/blamed for earlier trials in the next
+backward pass.
 
 - Odd blocks (1, 3, 5...): hold out the novel stimulus (index 2, which is     
 always the newly introduced one)                                              
