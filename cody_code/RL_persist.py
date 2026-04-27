@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 seed = 408
 TRIALS_PER_BLOCK = 15
-NUM_EPISODES = 1000
+NUM_EPISODES = 1500
 EVAL_INTERVAL = 5
 CHECKPOINT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
 
@@ -120,12 +120,18 @@ class BanditTask:
 
 class StateEncoder(nn.Module):
     """
-    minimal step encoding, no one-hot placeholders.
+    RL²-style step encoding: includes last (action, reward) at every step.
 
-    output dim = 5:
+    output dim = 7:
       - 1 trial fraction
       - 3 step flags: [stim, decision, feedback]
-      - 1 reward scalar (only nonzero at feedback)
+      - 1 reward scalar (current-step reward; nonzero only at feedback)
+      - 1 last_action scalar (side of most recent chosen, 0/1; 0 at block start)
+      - 1 last_reward scalar (reward of most recent feedback; 0 at block start)
+
+    the "last_*" fields carry the most recently observed feedback event's
+    (action, reward), updated right before each feedback step. this gives the
+    LSTM an explicit RL² view of (s_t, a_{t-1}, r_{t-1}) at every step.
     """
 
     def __init__(self, norm_trials=15):
@@ -134,20 +140,29 @@ class StateEncoder(nn.Module):
 
     @property
     def out_dim(self) -> int:
-        return 5
+        return 7
 
     def _trial(self, info) -> torch.Tensor:
         t = float(info["trial"]) / self.norm_trials
         return torch.tensor([t], dtype=torch.float32)
 
-    def stim(self, info) -> torch.Tensor:
-        return torch.cat([self._trial(info), torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32)])
+    def stim(self, info, last_action, last_reward) -> torch.Tensor:
+        return torch.cat([
+            self._trial(info),
+            torch.tensor([1.0, 0.0, 0.0, 0.0, float(last_action), float(last_reward)], dtype=torch.float32),
+        ])
 
-    def decision(self, info) -> torch.Tensor:
-        return torch.cat([self._trial(info), torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32)])
+    def decision(self, info, last_action, last_reward) -> torch.Tensor:
+        return torch.cat([
+            self._trial(info),
+            torch.tensor([0.0, 1.0, 0.0, 0.0, float(last_action), float(last_reward)], dtype=torch.float32),
+        ])
 
-    def feedback(self, reward, info) -> torch.Tensor:
-        return torch.cat([self._trial(info), torch.tensor([0.0, 0.0, 1.0, float(reward)], dtype=torch.float32)])
+    def feedback(self, reward, info, last_action, last_reward) -> torch.Tensor:
+        return torch.cat([
+            self._trial(info),
+            torch.tensor([0.0, 0.0, 1.0, float(reward), float(last_action), float(last_reward)], dtype=torch.float32),
+        ])
 
 
 class LSTMPolicyNetwork(nn.Module):
@@ -276,7 +291,7 @@ class RLAgent:
         hidden_size=128,
         lr=3e-4,
         gamma=0.99,
-        entropy_coef=0.003,
+        entropy_coef=0.02,
         value_coef=0.5,
         aux_coef=2.0,
         update_freq=15,
@@ -296,8 +311,9 @@ class RLAgent:
         # provides distinguishable but arbitrary identity tokens, like fresh paintings
         self.id_embedding = nn.Embedding(self.num_stimuli, self.id_emb_dim).to(self.device)
 
-        # total input dim = left_emb + right_emb + base_state
-        lstm_input_size = (2 * self.id_emb_dim) + self.state_encoder.out_dim
+        # total input dim = left_emb + right_emb + last_chosen_emb + base_state
+        # last_chosen_emb is zero before any feedback, else the most recent chosen id's embedding
+        lstm_input_size = (3 * self.id_emb_dim) + self.state_encoder.out_dim
         self.policy_network = LSTMPolicyNetwork(
             input_size=lstm_input_size,
             hidden_size=self.hidden_size,
@@ -367,23 +383,22 @@ class RLAgent:
       - do this in training probes and in greedy probes
     """
 
-    def _embed_pair(self, left_id: int, right_id: int) -> torch.Tensor:
+    def _embed_triple(self, left_id: int, right_id: int, last_chosen_id) -> torch.Tensor:
+        """
+        RL² input embedding: left/right offered pair + last chosen id.
+        last_chosen_id is None (zero vector) before any feedback has been observed
+        in the current block.
+        """
         left_t = torch.tensor([left_id], device=self.device, dtype=torch.long)
         right_t = torch.tensor([right_id], device=self.device, dtype=torch.long)
         e_left = self.id_embedding(left_t)    # (1, emb)
         e_right = self.id_embedding(right_t)  # (1, emb)
-        return torch.cat([e_left, e_right], dim=-1)  # (1, 2*emb)
-
-    def _embed_feedback(self, chosen_id: int, chosen_side: int) -> torch.Tensor:
-        # feedback tells the rnn which identity produced the reward,
-        # placed in its actual position to avoid left-slot bias
-        chosen_t = torch.tensor([chosen_id], device=self.device, dtype=torch.long)
-        e_chosen = self.id_embedding(chosen_t)      # (1, emb)
-        e_zero = torch.zeros_like(e_chosen)         # (1, emb)
-        if chosen_side == 0:  # chose left
-            return torch.cat([e_chosen, e_zero], dim=-1)
-        else:  # chose right
-            return torch.cat([e_zero, e_chosen], dim=-1)
+        if last_chosen_id is None:
+            e_last = torch.zeros_like(e_left)
+        else:
+            last_t = torch.tensor([int(last_chosen_id)], device=self.device, dtype=torch.long)
+            e_last = self.id_embedding(last_t)
+        return torch.cat([e_left, e_right, e_last], dim=-1)  # (1, 3*emb)
 
     def checkpoint_if_best(self, eval_reward: float, episode: int = -1):
         if eval_reward > self.best_eval_reward:
@@ -453,6 +468,11 @@ class RLAgent:
 
             hidden = None  # reset per block (probs reset each block)
 
+            # RL² memory: most recent feedback event (reset at block start)
+            last_chosen_id = None
+            last_action = 0.0
+            last_reward = 0.0
+
             # block-local beta trackers keyed by stim_id
             beta_map = {b.stim_id: BlockBeta() for b in task.current_bandits}
 
@@ -463,14 +483,14 @@ class RLAgent:
                 left_id, right_id = left_bandit.stim_id, right_bandit.stim_id
                 info = {"block": block, "trial": trial}
 
-                id_feats = self._embed_pair(left_id, right_id)
+                id_feats = self._embed_triple(left_id, right_id, last_chosen_id)
 
                 # 1) stimulus step
-                x_stim = self._make_step_input(id_feats, self.state_encoder.stim(info))
+                x_stim = self._make_step_input(id_feats, self.state_encoder.stim(info, last_action, last_reward))
                 _, _, hidden = self.policy_network(x_stim, hidden)
 
                 # 2) decision step
-                x_dec = self._make_step_input(id_feats, self.state_encoder.decision(info))
+                x_dec = self._make_step_input(id_feats, self.state_encoder.decision(info, last_action, last_reward))
                 lstm_out, values, hidden = self.policy_network(x_dec, hidden)
 
                 # policy via bilinear retrieval: embeddings as queries into context-memory
@@ -495,13 +515,18 @@ class RLAgent:
                 emb_chosen = emb_l if chosen_side == 0 else emb_r
                 aux_pred = self.policy_network.predict_reward(context, emb_chosen)  # (1, 1)
 
-                # 3) feedback step
+                # 3) feedback step — update last_* before building input so fb
+                # input reflects just-observed (chosen, action, reward)
                 r = chosen.sample_reward()
                 episode_reward += r
                 beta_map[chosen_id].update(r)
 
-                id_feats_fb = self._embed_feedback(chosen_id, chosen_side)
-                x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info))
+                last_chosen_id = chosen_id
+                last_action = float(chosen_side)
+                last_reward = float(r)
+
+                id_feats_fb = self._embed_triple(left_id, right_id, last_chosen_id)
+                x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info, last_action, last_reward))
                 _, _, hidden = self.policy_network(x_fb, hidden)
 
                 saved_logps.append(logp.squeeze(0))
@@ -563,6 +588,7 @@ class RLAgent:
         all_slots = []       # 0=slot0, 1=slot1 (network action)
         all_correct = []     # did it pick the higher-prob option?
         all_prob_diffs = []  # true_prob(left) - true_prob(right)
+        all_entropies = []   # softmax entropy at each decision (exploration health)
 
         with torch.no_grad():
             for _ in range(num_episodes):
@@ -573,25 +599,33 @@ class RLAgent:
                 for block in range(task.n_blocks):
                     task.start_block(block)
                     hidden = None
+                    last_chosen_id = None
+                    last_action = 0.0
+                    last_reward = 0.0
 
                     for trial in range(task.trials_per_block):
                         left_bandit, right_bandit = task.sample_two_bandits(trial)
                         left_id, right_id = left_bandit.stim_id, right_bandit.stim_id
                         info = {"block": block, "trial": trial}
 
-                        id_feats = self._embed_pair(left_id, right_id)
+                        id_feats = self._embed_triple(left_id, right_id, last_chosen_id)
 
                         # stimulus step
-                        x_stim = self._make_step_input(id_feats, self.state_encoder.stim(info))
+                        x_stim = self._make_step_input(id_feats, self.state_encoder.stim(info, last_action, last_reward))
                         _, _, hidden = self.policy_network(x_stim, hidden)
 
                         # decision step (greedy via bilinear policy head)
-                        x_dec = self._make_step_input(id_feats, self.state_encoder.decision(info))
+                        x_dec = self._make_step_input(id_feats, self.state_encoder.decision(info, last_action, last_reward))
                         lstm_out, _, hidden = self.policy_network(x_dec, hidden)
                         context = lstm_out[:, -1, :]
                         emb_l = self.id_embedding(torch.tensor([left_id], device=self.device, dtype=torch.long))
                         emb_r = self.id_embedding(torch.tensor([right_id], device=self.device, dtype=torch.long))
                         dec_logits = self.policy_network.get_policy_logits(context, emb_l, emb_r)
+
+                        # softmax entropy (exploration diagnostic)
+                        probs = F.softmax(dec_logits, dim=-1)
+                        ent = -(probs * torch.log(probs.clamp_min(1e-12))).sum(dim=-1)
+                        all_entropies.append(float(ent.item()))
 
                         chosen_side = int(dec_logits.argmax(dim=-1).item())
                         chosen = left_bandit if chosen_side == 0 else right_bandit
@@ -613,8 +647,11 @@ class RLAgent:
                             all_correct.append(1)
 
                         # feedback step
-                        id_feats_fb = self._embed_feedback(chosen_id, chosen_side)
-                        x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info))
+                        last_chosen_id = chosen_id
+                        last_action = float(chosen_side)
+                        last_reward = float(r)
+                        id_feats_fb = self._embed_triple(left_id, right_id, last_chosen_id)
+                        x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info, last_action, last_reward))
                         _, _, hidden = self.policy_network(x_fb, hidden)
 
                 total_rewards.append(episode_reward)
@@ -632,7 +669,8 @@ class RLAgent:
         acc_easy = float(correct_arr[easy_mask].mean()) if easy_mask.sum() > 0 else float("nan")
         acc_hard = float(correct_arr[hard_mask].mean()) if hard_mask.sum() > 0 else float("nan")
 
-        return float(np.mean(total_rewards)), float(np.std(total_rewards)), left_frac, slot0_frac, accuracy, acc_easy, acc_hard, all_prob_diffs, all_sides, all_correct
+        mean_entropy = float(np.mean(all_entropies)) if all_entropies else float("nan")
+        return float(np.mean(total_rewards)), float(np.std(total_rewards)), left_frac, slot0_frac, accuracy, acc_easy, acc_hard, all_prob_diffs, all_sides, all_correct, mean_entropy
 
     def run_greedy_probes(self, task: BanditTask, num_episodes=1, clear_existing=True):
         """
@@ -657,6 +695,9 @@ class RLAgent:
                 for block in range(task.n_blocks):
                     task.start_block(block)
                     hidden = None
+                    last_chosen_id = None
+                    last_action = 0.0
+                    last_reward = 0.0
 
                     beta_map = {b.stim_id: BlockBeta() for b in task.current_bandits}
 
@@ -674,15 +715,15 @@ class RLAgent:
                         seen_count[left_id] += 1
                         seen_count[right_id] += 1
 
-                        id_feats = self._embed_pair(left_id, right_id)
+                        id_feats = self._embed_triple(left_id, right_id, last_chosen_id)
 
                         # stim step
-                        x_stim = self._make_step_input(id_feats, self.state_encoder.stim(info))
+                        x_stim = self._make_step_input(id_feats, self.state_encoder.stim(info, last_action, last_reward))
                         _, _, hidden = self.policy_network(x_stim, hidden)
                         h_stim = hidden[0][-1].squeeze(0).detach().cpu().numpy()
 
                         # decision step (greedy via bilinear policy head + activation capture)
-                        x_dec = self._make_step_input(id_feats, self.state_encoder.decision(info))
+                        x_dec = self._make_step_input(id_feats, self.state_encoder.decision(info, last_action, last_reward))
                         lstm_out, values, hidden, acts = self.policy_network(x_dec, hidden, return_activations=True)
                         v_dec = values[:, -1, 0].detach().cpu().item()
 
@@ -710,8 +751,11 @@ class RLAgent:
                         episode_reward += r
                         beta_map[chosen_id].update(r)
 
-                        id_feats_fb = self._embed_feedback(chosen_id, chosen_side)
-                        x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info))
+                        last_chosen_id = chosen_id
+                        last_action = float(chosen_side)
+                        last_reward = float(r)
+                        id_feats_fb = self._embed_triple(left_id, right_id, last_chosen_id)
+                        x_fb = self._make_step_input(id_feats_fb, self.state_encoder.feedback(r, info, last_action, last_reward))
                         _, _, hidden = self.policy_network(x_fb, hidden)
                         h_fb = hidden[0][-1].squeeze(0).detach().cpu().numpy()
 
@@ -915,6 +959,9 @@ def diagnose_learning(agent, task, n_blocks=3):
         for block in range(n_blocks):
             task.start_block(block)
             hidden = None
+            last_chosen_id = None
+            last_action = 0.0
+            last_reward = 0.0
             reward_history = defaultdict(list)  # stim_id -> [rewards]
 
             probs_desc = [f"id{b.stim_id}(p={b.true_prob:.2f})" for b in task.current_bandits]
@@ -926,14 +973,14 @@ def diagnose_learning(agent, task, n_blocks=3):
                 left_id, right_id = left_bandit.stim_id, right_bandit.stim_id
                 info = {"block": block, "trial": trial}
 
-                id_feats = agent._embed_pair(left_id, right_id)
+                id_feats = agent._embed_triple(left_id, right_id, last_chosen_id)
 
                 # stim
-                x_stim = agent._make_step_input(id_feats, agent.state_encoder.stim(info))
+                x_stim = agent._make_step_input(id_feats, agent.state_encoder.stim(info, last_action, last_reward))
                 _, _, hidden = agent.policy_network(x_stim, hidden)
 
                 # decision
-                x_dec = agent._make_step_input(id_feats, agent.state_encoder.decision(info))
+                x_dec = agent._make_step_input(id_feats, agent.state_encoder.decision(info, last_action, last_reward))
                 lstm_out, _, hidden = agent.policy_network(x_dec, hidden)
                 context = lstm_out[:, -1, :]
 
@@ -956,8 +1003,11 @@ def diagnose_learning(agent, task, n_blocks=3):
                 reward_history[chosen_id].append(r)
 
                 # feedback
-                id_feats_fb = agent._embed_feedback(chosen_id, chosen_side)
-                x_fb = agent._make_step_input(id_feats_fb, agent.state_encoder.feedback(r, info))
+                last_chosen_id = chosen_id
+                last_action = float(chosen_side)
+                last_reward = float(r)
+                id_feats_fb = agent._embed_triple(left_id, right_id, last_chosen_id)
+                x_fb = agent._make_step_input(id_feats_fb, agent.state_encoder.feedback(r, info, last_action, last_reward))
                 _, _, hidden = agent.policy_network(x_fb, hidden)
 
                 # format reward history
@@ -1019,7 +1069,7 @@ def main():
         agent.scheduler.step()
 
         if ep % EVAL_INTERVAL == 0:
-            eval_mean, eval_std, left_frac, slot0_frac, accuracy, acc_easy, acc_hard, _, _, _ = agent.evaluate(task, num_episodes=5)
+            eval_mean, eval_std, left_frac, slot0_frac, accuracy, acc_easy, acc_hard, _, _, _, eval_entropy = agent.evaluate(task, num_episodes=5)
             agent.training_stats["eval_rewards"].append((ep, eval_mean, eval_std))
             agent.training_stats["greedy_left_frac"].append((ep, left_frac))
             agent.training_stats["greedy_slot0_frac"].append((ep, slot0_frac))
@@ -1036,7 +1086,7 @@ def main():
             agent.training_stats["human_similarity"].append((ep, h_nll, h_agree, h_shape))
             agent.checkpoint_if_best_human(h_nll, episode=ep)
 
-            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f} | left%: {left_frac:.2f} | slot0%: {slot0_frac:.2f} | acc: {accuracy:.2f} (easy:{acc_easy:.2f} hard:{acc_hard:.2f}) | hNLL: {h_nll:.4f} agree: {h_agree:.3f} | lr: {agent.scheduler.get_last_lr()[0]:.2e}")
+            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f} | left%: {left_frac:.2f} | slot0%: {slot0_frac:.2f} | acc: {accuracy:.2f} (easy:{acc_easy:.2f} hard:{acc_hard:.2f}) | H: {eval_entropy:.3f} | hNLL: {h_nll:.4f} agree: {h_agree:.3f} | lr: {agent.scheduler.get_last_lr()[0]:.2e}")
             agent.checkpoint_if_best(eval_mean, episode=ep)
             agent.save_checkpoint(ep)
 
@@ -1049,8 +1099,8 @@ def main():
     print("=" * 70)
     agent.restore_best()
 
-    mean_r, std_r, final_left_frac, final_slot0_frac, final_acc, final_acc_easy, final_acc_hard, final_prob_diffs, final_sides, final_correct = agent.evaluate(task, num_episodes=20)
-    print(f"performance: {mean_r:.2f} ± {std_r:.2f} | left%: {final_left_frac:.2f} | slot0%: {final_slot0_frac:.2f} | acc: {final_acc:.2f} (easy:{final_acc_easy:.2f} hard:{final_acc_hard:.2f})")
+    mean_r, std_r, final_left_frac, final_slot0_frac, final_acc, final_acc_easy, final_acc_hard, final_prob_diffs, final_sides, final_correct, final_entropy = agent.evaluate(task, num_episodes=20)
+    print(f"performance: {mean_r:.2f} ± {std_r:.2f} | left%: {final_left_frac:.2f} | slot0%: {final_slot0_frac:.2f} | acc: {final_acc:.2f} (easy:{final_acc_easy:.2f} hard:{final_acc_hard:.2f}) | H: {final_entropy:.3f}")
 
     replay_df = replay_human_trials(agent, human_df)
     metrics = compute_metrics(replay_df)
@@ -1076,8 +1126,8 @@ def main():
     print("=" * 70)
     agent.restore_best_human()
 
-    mean_r, std_r, hs_left, hs_slot0, hs_acc, hs_easy, hs_hard, _, _, _ = agent.evaluate(task, num_episodes=20)
-    print(f"performance: {mean_r:.2f} ± {std_r:.2f} | left%: {hs_left:.2f} | slot0%: {hs_slot0:.2f} | acc: {hs_acc:.2f} (easy:{hs_easy:.2f} hard:{hs_hard:.2f})")
+    mean_r, std_r, hs_left, hs_slot0, hs_acc, hs_easy, hs_hard, _, _, _, hs_entropy = agent.evaluate(task, num_episodes=20)
+    print(f"performance: {mean_r:.2f} ± {std_r:.2f} | left%: {hs_left:.2f} | slot0%: {hs_slot0:.2f} | acc: {hs_acc:.2f} (easy:{hs_easy:.2f} hard:{hs_hard:.2f}) | H: {hs_entropy:.3f}")
 
     replay_df = replay_human_trials(agent, human_df)
     metrics = compute_metrics(replay_df)

@@ -56,6 +56,9 @@ def replay_human_trials(agent, human_df):
         hidden = None
         beta_map = {}
         current_block = None
+        last_chosen_id = None
+        last_action = 0.0
+        last_reward = 0.0
 
         # fresh random embeddings for this subject (= fresh episode)
         agent.randomize_embeddings()
@@ -79,6 +82,9 @@ def replay_human_trials(agent, human_df):
                 hidden = None
                 beta_map = {}
                 current_block = block
+                last_chosen_id = None
+                last_action = 0.0
+                last_reward = 0.0
 
             # init beta for unseen stims in this block (keyed by original ID)
             for sid in [left_id_orig, right_id_orig]:
@@ -94,12 +100,12 @@ def replay_human_trials(agent, human_df):
             info = {"block": block, "trial": trial}
 
             # stim step
-            id_feats = agent._embed_pair(left_id, right_id)
-            x_stim = agent._make_step_input(id_feats, agent.state_encoder.stim(info))
+            id_feats = agent._embed_triple(left_id, right_id, last_chosen_id)
+            x_stim = agent._make_step_input(id_feats, agent.state_encoder.stim(info, last_action, last_reward))
             _, _, hidden = agent.policy_network(x_stim, hidden)
 
             # decision step
-            x_dec = agent._make_step_input(id_feats, agent.state_encoder.decision(info))
+            x_dec = agent._make_step_input(id_feats, agent.state_encoder.decision(info, last_action, last_reward))
             lstm_out, _, hidden = agent.policy_network(x_dec, hidden)
             context = lstm_out[:, -1, :]
 
@@ -118,9 +124,12 @@ def replay_human_trials(agent, human_df):
             human_chosen_id_orig = int(row["chosen_stim_id"])
             human_chosen_id = stim_remap[human_chosen_id_orig]
 
-            id_feats_fb = agent._embed_feedback(human_chosen_id, human_choice)
+            last_chosen_id = human_chosen_id
+            last_action = float(human_choice)
+            last_reward = float(human_reward)
+            id_feats_fb = agent._embed_triple(left_id, right_id, last_chosen_id)
             x_fb = agent._make_step_input(
-                id_feats_fb, agent.state_encoder.feedback(human_reward, info)
+                id_feats_fb, agent.state_encoder.feedback(human_reward, info, last_action, last_reward)
             )
             _, _, hidden = agent.policy_network(x_fb, hidden)
 
