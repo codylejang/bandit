@@ -341,10 +341,16 @@ class RLAgent:
         self.best_eval_episode = -1
         self.best_state = None
 
-        # best model checkpoint (by human similarity — lowest NLL)
-        self.best_human_nll = float("inf")
+        # best model checkpoint (by human similarity — highest shape_r).
+        # shape_r is primary because raw NLL has a uniform-baseline floor
+        # (~ln 2) tighter than achievable signal given human accuracy.
+        self.best_human_shape = -float("inf")
         self.best_human_episode = -1
         self.best_human_state = None
+        # also track best temp-fit NLL as a secondary diagnostic
+        self.best_temp_nll = float("inf")
+        self.best_temp_episode = -1
+        self.best_temp_state = None
 
         self.training_stats = {
             "rewards": [],
@@ -356,7 +362,7 @@ class RLAgent:
             "greedy_slot0_frac": [],   # (episode_idx, fraction picking slot 0)
             "greedy_acc_easy": [],     # (episode_idx, accuracy on easy trials)
             "greedy_acc_hard": [],     # (episode_idx, accuracy on hard trials)
-            "human_similarity": [],    # (episode_idx, nll, agreement, shape_r)
+            "human_similarity": [],    # (episode_idx, nll, agreement, shape_r, temp_fit_nll, temp_fit_tau)
         }
 
     """
@@ -413,9 +419,9 @@ class RLAgent:
             self.policy_network.load_state_dict(self.best_state["policy_network"])
             print(f"restored best model (ep {self.best_eval_episode}, eval reward: {self.best_eval_reward:.1f})")
 
-    def checkpoint_if_best_human(self, nll: float, episode: int = -1):
-        if nll < self.best_human_nll:
-            self.best_human_nll = nll
+    def checkpoint_if_best_human(self, shape_r: float, episode: int = -1):
+        if not (shape_r != shape_r) and shape_r > self.best_human_shape:
+            self.best_human_shape = float(shape_r)
             self.best_human_episode = episode
             self.best_human_state = {
                 "policy_network": {k: v.clone() for k, v in self.policy_network.state_dict().items()},
@@ -424,7 +430,20 @@ class RLAgent:
     def restore_best_human(self):
         if self.best_human_state is not None:
             self.policy_network.load_state_dict(self.best_human_state["policy_network"])
-            print(f"restored most human-similar model (ep {self.best_human_episode}, NLL: {self.best_human_nll:.4f})")
+            print(f"restored most human-similar model (ep {self.best_human_episode}, shape_r: {self.best_human_shape:.4f})")
+
+    def checkpoint_if_best_temp(self, temp_nll: float, episode: int = -1):
+        if temp_nll < self.best_temp_nll:
+            self.best_temp_nll = float(temp_nll)
+            self.best_temp_episode = episode
+            self.best_temp_state = {
+                "policy_network": {k: v.clone() for k, v in self.policy_network.state_dict().items()},
+            }
+
+    def restore_best_temp(self):
+        if self.best_temp_state is not None:
+            self.policy_network.load_state_dict(self.best_temp_state["policy_network"])
+            print(f"restored best temp-fit-NLL model (ep {self.best_temp_episode}, tNLL: {self.best_temp_nll:.4f})")
 
     def save_checkpoint(self, episode, checkpoint_dir=CHECKPOINT_DIR):
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -1083,10 +1102,14 @@ def main():
             h_nll = metrics["nll"]
             h_agree = metrics["choice_agreement"]
             h_shape = metrics["policy_shape_r"]
-            agent.training_stats["human_similarity"].append((ep, h_nll, h_agree, h_shape))
-            agent.checkpoint_if_best_human(h_nll, episode=ep)
+            h_tnll = metrics["temp_fit_nll"]
+            h_tau = metrics["temp_fit_tau"]
+            agent.training_stats["human_similarity"].append((ep, h_nll, h_agree, h_shape, h_tnll, h_tau))
+            # primary human-similarity selection: shape_r (NLL has uniform-floor problem)
+            agent.checkpoint_if_best_human(h_shape, episode=ep)
+            agent.checkpoint_if_best_temp(h_tnll, episode=ep)
 
-            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f} | left%: {left_frac:.2f} | slot0%: {slot0_frac:.2f} | acc: {accuracy:.2f} (easy:{acc_easy:.2f} hard:{acc_hard:.2f}) | H: {eval_entropy:.3f} | hNLL: {h_nll:.4f} agree: {h_agree:.3f} | lr: {agent.scheduler.get_last_lr()[0]:.2e}")
+            print(f"episode {ep:3d} | train reward: {reward:6.1f} | eval: {eval_mean:6.1f} ± {eval_std:4.1f} | left%: {left_frac:.2f} | slot0%: {slot0_frac:.2f} | acc: {accuracy:.2f} (easy:{acc_easy:.2f} hard:{acc_hard:.2f}) | H: {eval_entropy:.3f} | shape_r: {h_shape:+.3f} | tNLL: {h_tnll:.4f} τ={h_tau:.2f} | rNLL: {h_nll:.4f} agree: {h_agree:.3f} | lr: {agent.scheduler.get_last_lr()[0]:.2e}")
             agent.checkpoint_if_best(eval_mean, episode=ep)
             agent.save_checkpoint(ep)
 
@@ -1120,9 +1143,9 @@ def main():
 
     diagnose_learning(agent, task)
 
-    # ---- final eval: most human-similar ----
+    # ---- final eval: most human-similar (highest shape_r) ----
     print("\n" + "=" * 70)
-    print("MOST HUMAN-SIMILAR (lowest NLL)")
+    print("MOST HUMAN-SIMILAR (highest shape_r)")
     print("=" * 70)
     agent.restore_best_human()
 
@@ -1131,9 +1154,24 @@ def main():
 
     replay_df = replay_human_trials(agent, human_df)
     metrics = compute_metrics(replay_df)
-    print(f"human similarity: NLL={metrics['nll']:.4f} | agree={metrics['choice_agreement']:.3f} | shape_r={metrics['policy_shape_r']:.3f}")
+    print(f"human similarity: NLL={metrics['nll']:.4f} | tNLL={metrics['temp_fit_nll']:.4f} (τ={metrics['temp_fit_tau']:.2f}) | agree={metrics['choice_agreement']:.3f} | shape_r={metrics['policy_shape_r']:.3f}")
 
     diagnose_learning(agent, task)
+
+    # ---- final eval: best temp-fit NLL ----
+    print("\n" + "=" * 70)
+    print("BEST TEMP-FIT NLL (calibration-decoupled)")
+    print("=" * 70)
+    agent.restore_best_temp()
+
+    mean_r, std_r, t_left, t_slot0, t_acc, t_easy, t_hard, _, _, _, t_entropy = agent.evaluate(task, num_episodes=20)
+    print(f"performance: {mean_r:.2f} ± {std_r:.2f} | left%: {t_left:.2f} | slot0%: {t_slot0:.2f} | acc: {t_acc:.2f} (easy:{t_easy:.2f} hard:{t_hard:.2f}) | H: {t_entropy:.3f}")
+
+    replay_df = replay_human_trials(agent, human_df)
+    metrics = compute_metrics(replay_df)
+    uniform_floor = float(np.log(2.0))
+    below = "BELOW" if metrics["temp_fit_nll"] < uniform_floor else "above"
+    print(f"human similarity: NLL={metrics['nll']:.4f} | tNLL={metrics['temp_fit_nll']:.4f} ({below} uniform={uniform_floor:.4f}, τ={metrics['temp_fit_tau']:.2f}) | agree={metrics['choice_agreement']:.3f} | shape_r={metrics['policy_shape_r']:.3f}")
 
     return agent
 

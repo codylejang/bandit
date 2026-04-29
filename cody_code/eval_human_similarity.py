@@ -25,6 +25,9 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from scipy import stats
+from scipy.optimize import minimize_scalar
+
+UNIFORM_NLL = float(np.log(2.0))
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from RL_persist import RLAgent, BlockBeta, CHECKPOINT_DIR
@@ -170,6 +173,35 @@ def replay_human_trials(agent, human_df):
 
 # metrics
 
+def fit_temperature(logit_diffs, human_choices, eps=1e-7):
+    """
+    Fit a scalar temperature tau minimizing NLL of human choices under
+        p(left) = sigmoid(tau * logit_diff)
+
+    Decouples shape (logit direction) from calibration (logit magnitude),
+    matching the cogsci convention where inverse temperature beta is fit
+    per-subject. Lets NLL become a usable selection criterion when the
+    model has the right shape but wrong commitment scale.
+
+    Returns (tau, temp_fit_nll). Uniform baseline is ln(2) ≈ 0.693.
+    """
+    ld = np.asarray(logit_diffs, dtype=np.float64)
+    hc = np.asarray(human_choices, dtype=np.int64)
+
+    def nll(tau):
+        x = np.clip(tau * ld, -50.0, 50.0)
+        p_left = 1.0 / (1.0 + np.exp(-x))
+        p_human = np.where(hc == 0, p_left, 1.0 - p_left)
+        p_human = np.clip(p_human, eps, 1.0 - eps)
+        return float(-np.mean(np.log(p_human)))
+
+    # bounded scalar optimization; tau in [0, 100] covers everything sane.
+    # tau=0 collapses to uniform (NLL = ln 2), so a lower bound > 0 is fine.
+    res = minimize_scalar(nll, bounds=(1e-4, 100.0), method="bounded",
+                          options={"xatol": 1e-5})
+    return float(res.x), float(res.fun)
+
+
 def compute_metrics(replay_df, n_bins=8):
     """
     Compute similarity metrics from a synchronized replay DataFrame.
@@ -177,6 +209,9 @@ def compute_metrics(replay_df, n_bins=8):
     Returns dict with:
       choice_agreement    — fraction of trials model agrees with human
       nll                 — mean negative log-likelihood of human choices
+      temp_fit_nll        — NLL after fitting a single scalar temperature on logits
+                            (decouples shape from calibration; cf. softmax beta in cogsci)
+      temp_fit_tau        — fitted temperature
       policy_shape_r      — pearson r between dQ-binned P(left) curves
       q_mse               — mean squared error of beta-posterior Q (sanity)
       unc_mse             — mean squared error of beta-posterior uncertainty
@@ -196,6 +231,14 @@ def compute_metrics(replay_df, n_bins=8):
     )
     p_human = np.clip(p_human, eps, 1.0 - eps)
     m["nll"] = float(-np.log(p_human).mean())
+
+    # 2b. temperature-fit NLL (shape vs calibration decoupling)
+    tau, temp_nll = fit_temperature(
+        replay_df["model_logit_diff"].to_numpy(),
+        replay_df["human_choice"].to_numpy(),
+    )
+    m["temp_fit_tau"] = tau
+    m["temp_fit_nll"] = temp_nll
 
     # 3. policy shape correlation (dQ-binned P(left) for model vs human)
     df = replay_df.copy()
@@ -256,9 +299,11 @@ def evaluate_all_checkpoints(human_df, checkpoint_dir=CHECKPOINT_DIR):
         metrics["episode"] = ep
         metrics["checkpoint"] = os.path.basename(path)
         summary_rows.append(metrics)
+        below = "✓" if metrics["temp_fit_nll"] < UNIFORM_NLL else "·"
         print(
             f"  ep {ep:3d} | agree {metrics['choice_agreement']:.3f} | "
-            f"NLL {metrics['nll']:.3f} | shape_r {metrics['policy_shape_r']:.3f} | "
+            f"NLL {metrics['nll']:.3f} | tNLL {metrics['temp_fit_nll']:.3f}{below} "
+            f"τ={metrics['temp_fit_tau']:.2f} | shape_r {metrics['policy_shape_r']:.3f} | "
             f"logit~dQ r² {metrics['logit_dq_r2']:.3f}"
         )
 
@@ -280,8 +325,9 @@ def select_best(summary_df):
         mu, sd = df[col].mean(), df[col].std()
         df[f"{col}_z"] = (df[col] - mu) / (sd + 1e-8)
 
-    mu, sd = df["nll"].mean(), df["nll"].std()
-    df["nll_z"] = -(df["nll"] - mu) / (sd + 1e-8)
+    nll_col = "temp_fit_nll" if "temp_fit_nll" in df.columns else "nll"
+    mu, sd = df[nll_col].mean(), df[nll_col].std()
+    df["nll_z"] = -(df[nll_col] - mu) / (sd + 1e-8)
 
     df["composite"] = (
         df["choice_agreement_z"]
@@ -290,7 +336,9 @@ def select_best(summary_df):
         + df["logit_dq_r2_z"]
     ) / 4.0
 
-    best_ep = df["composite"].idxmax()
+    # primary: shape_r (raw NLL has a uniform-baseline floor problem; see notes).
+    # temp-fit NLL relaxes calibration but still suffers a tight headroom band.
+    best_ep = df["policy_shape_r"].idxmax()
     return best_ep, df
 
 
@@ -310,11 +358,15 @@ def plot_results(summary_df, best_ep, human_df, checkpoint_dir=CHECKPOINT_DIR):
     axes[0, 0].set_ylabel("fraction")
     axes[0, 0].legend(fontsize=8)
 
-    axes[0, 1].plot(eps, summary_df["nll"], "g-o", markersize=3)
+    axes[0, 1].plot(eps, summary_df["nll"], "g-o", markersize=3, label="raw NLL")
+    if "temp_fit_nll" in summary_df.columns:
+        axes[0, 1].plot(eps, summary_df["temp_fit_nll"], "b-o", markersize=3, label="temp-fit NLL")
+    axes[0, 1].axhline(UNIFORM_NLL, color="gray", ls=":", alpha=0.6, label=f"uniform={UNIFORM_NLL:.3f}")
     axes[0, 1].axvline(best_ep, color="red", ls="--", alpha=0.6)
     axes[0, 1].set_title("NLL of human choices")
     axes[0, 1].set_xlabel("episode")
     axes[0, 1].set_ylabel("NLL (lower = better)")
+    axes[0, 1].legend(fontsize=8)
 
     axes[0, 2].plot(eps, summary_df["policy_shape_r"], "m-o", markersize=3)
     axes[0, 2].axvline(best_ep, color="red", ls="--", alpha=0.6)
@@ -373,8 +425,10 @@ def main():
     summary = evaluate_all_checkpoints(human_df)
 
     best_ep, summary_with_composite = select_best(summary)
-    print(f"\n>>> best episode: {best_ep}")
-    print(f"    metrics: {summary.loc[best_ep].to_dict()}\n")
+    print(f"\n>>> best episode (selected by shape_r): {best_ep}")
+    print(f"    metrics: {summary.loc[best_ep].to_dict()}")
+    n_below = int((summary["temp_fit_nll"] < UNIFORM_NLL).sum())
+    print(f"    {n_below}/{len(summary)} checkpoints have temp_fit_nll < {UNIFORM_NLL:.3f} (uniform floor)\n")
 
     os.makedirs(OUT_DIR, exist_ok=True)
     csv_path = os.path.join(OUT_DIR, "checkpoint_metrics.csv")
